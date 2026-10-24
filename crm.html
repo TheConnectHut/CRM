@@ -1,0 +1,1526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relationships</title>
+<style>
+  /* ============ DESIGN TOKENS (from ankahee-design-tokens.css) ============ */
+  :root {
+    --bg: #FAF6F2;
+    --surface: #FFFFFF;
+    --surface-soft: #F3EEE8;
+    --primary: #5B4B7C;
+    --primary-dark: #443A5E;
+    --primary-soft: #EDE8F3;
+    --success: #4F8A6D;
+    --success-soft: #E7F1EB;
+    --risk: #B8524A;
+    --risk-soft: #F7E9E7;
+    --text: #2E2A33;
+    --text-muted: #7A7480;
+    --border: #E4DDD6;
+    --radius: 14px;
+    --radius-sm: 10px;
+    --shadow: 0 2px 10px rgba(46, 42, 51, 0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--primary); }
+  [hidden] { display: none !important; }
+
+  /* ============ HEADER ============ */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 10px 12px; display: flex; align-items: center; gap: 8px; min-height: 58px;
+  }
+  .icon-btn {
+    width: 44px; height: 44px; border: none; background: none; border-radius: 999px;
+    font-size: 28px; line-height: 1; color: var(--primary); cursor: pointer; flex-shrink: 0;
+  }
+  .icon-btn:active { background: var(--primary-soft); }
+  .hdr-title { flex: 1; min-width: 0; padding-left: 4px; }
+  .hdr-title .title { font-size: 16px; font-weight: 700; color: var(--primary-dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hdr-title .subtitle { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #hActions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+  /* ============ LAYOUT ============ */
+  main { max-width: 720px; margin: 0 auto; padding: 16px 16px 120px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 18px; margin-bottom: 14px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--primary-dark); margin: 0 0 10px 0; display: flex; justify-content: space-between; align-items: center;
+  }
+  .card-title .link-btn { text-transform: none; letter-spacing: 0; font-size: 14px; }
+  .muted { color: var(--text-muted); }
+  .small { font-size: 13px; }
+  .center { text-align: center; }
+  .loading-note, .empty { text-align: center; padding: 36px 16px; color: var(--text-muted); font-size: 15px; }
+  .empty .btn { margin-top: 12px; }
+
+  /* ============ BUTTONS ============ */
+  .btn {
+    min-height: 44px; padding: 10px 18px; border-radius: var(--radius-sm); border: 1.5px solid var(--primary);
+    background: var(--surface); color: var(--primary); font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit;
+    display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
+  }
+  .btn:active { background: var(--primary-soft); }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:active { background: var(--primary-dark); }
+  .btn-sm { min-height: 44px; padding: 8px 14px; font-size: 14px; border-radius: 999px; }
+  .btn:disabled { opacity: 0.5; }
+  .link-btn { background: none; border: none; color: var(--primary); font-weight: 600; font-size: 15px; cursor: pointer; padding: 10px 4px; min-height: 44px; font-family: inherit; text-decoration: underline; text-underline-offset: 3px; }
+
+  /* ============ BOTTOM BAR ============ */
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--surface);
+    border-top: 1px solid var(--border); padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .bar-inner { max-width: 720px; margin: 0 auto; display: flex; gap: 10px; }
+  .bar-inner .btn { flex: 1; min-height: 50px; font-size: 16px; font-weight: 700; }
+  .bar-error { max-width: 720px; margin: 0 auto 8px; font-size: 13px; color: var(--risk); text-align: center; display: none; }
+
+  /* ============ TABS, SEARCH, FILTERS ============ */
+  .identity-bar {
+    display: flex; align-items: center; justify-content: space-between; background: var(--primary-soft);
+    border-radius: var(--radius-sm); padding: 4px 6px 4px 14px; margin-bottom: 14px; font-size: 14px;
+  }
+  .identity-bar strong { color: var(--primary-dark); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; overflow-x: auto; }
+  .tab {
+    padding: 10px 16px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--surface);
+    font-size: 14px; font-weight: 600; color: var(--text); cursor: pointer; min-height: 44px; white-space: nowrap; font-family: inherit;
+  }
+  .tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .searchrow { display: flex; gap: 8px; margin-bottom: 10px; }
+  .searchrow input { flex: 1; }
+  .filter-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .filter-panel .field { margin: 0; }
+  .filter-panel .wide { grid-column: 1 / -1; text-align: right; }
+  .count-line { font-size: 13px; color: var(--text-muted); margin: 4px 2px 10px; }
+
+  /* ============ LIST ROWS ============ */
+  .list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 14px; }
+  .row { display: block; padding: 14px 16px; border-bottom: 1px solid var(--border); text-decoration: none; color: inherit; min-height: 44px; }
+  .row:last-child { border-bottom: none; }
+  a.row:active { background: var(--primary-soft); }
+  .row-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  .row-title { font-weight: 600; font-size: 16px; color: var(--text); }
+  .row-sub { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+  .row-tags { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* ============ BADGES ============ */
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: var(--surface-soft); color: var(--text); white-space: nowrap;
+  }
+  .st-new { background: var(--primary-soft); color: var(--primary-dark); }
+  .st-prog { background: var(--primary); color: #fff; }
+  .st-conv { background: var(--success-soft); color: var(--success); }
+  .st-ni { background: var(--surface-soft); color: var(--text-muted); }
+  .cold { background: var(--risk-soft); color: var(--risk); }
+  .tag { background: var(--primary-soft); color: var(--primary-dark); }
+
+  /* ============ ORGANISATION PAGE ============ */
+  .org-name { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .contact { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .contact:last-child { border-bottom: none; padding-bottom: 0; }
+  .contact:first-child { padding-top: 0; }
+  .c-name { font-weight: 600; }
+  .c-role { font-size: 13px; color: var(--text-muted); }
+  .c-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 2px; }
+  .c-links a { display: inline-flex; align-items: center; min-height: 44px; font-size: 15px; }
+  .about-text, .pre { white-space: pre-wrap; }
+  .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 14px; }
+  .kv dt { color: var(--text-muted); } .kv dd { margin: 0; }
+  .int { padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .int:last-child { border-bottom: none; padding-bottom: 0; }
+  .int:first-child { padding-top: 0; }
+  .int-top { font-size: 13px; color: var(--text-muted); }
+  .int-top b { color: var(--text); }
+  .int-sum { margin-top: 3px; white-space: pre-wrap; }
+  .int-next { margin-top: 4px; font-size: 14px; }
+  .overdue { color: var(--risk); font-weight: 600; }
+  .meta { font-size: 13px; color: var(--text-muted); }
+  .meta-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; }
+  .banner { background: var(--risk-soft); border: 1px solid #E9C9C5; border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px; font-size: 14px; }
+  .banner.soft { background: var(--primary-soft); border-color: var(--border); }
+
+  /* ============ FORMS ============ */
+  .field { margin-bottom: 18px; }
+  .field:last-child { margin-bottom: 0; }
+  .field-label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .field-label .optional { font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: 4px; }
+  select, input[type="text"], input[type="date"], input[type="search"], input[type="url"] {
+    width: 100%; padding: 12px 14px; border-radius: var(--radius-sm); border: 1.5px solid var(--border);
+    font-size: 16px; background: var(--surface); color: var(--text); min-height: 46px; font-family: inherit;
+  }
+  textarea {
+    width: 100%; padding: 12px 14px; border-radius: var(--radius-sm); border: 1.5px solid var(--border);
+    font-size: 16px; font-family: inherit; min-height: 80px; resize: vertical; background: var(--surface); color: var(--text);
+  }
+  select:focus, input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    padding: 10px 16px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--surface);
+    font-size: 14px; color: var(--text); cursor: pointer; min-height: 44px; display: flex; align-items: center;
+    user-select: none; font-family: inherit;
+  }
+  .chip:active { transform: scale(0.97); }
+  .chip.selected { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+  .chips[data-multi] .chip.selected::before { content: "✓"; margin-right: 6px; font-weight: 700; }
+  .chip.disabled { opacity: 0.45; cursor: default; text-decoration: line-through; }
+  .field.flash { outline: 2px solid var(--risk); border-radius: 10px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .check-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; min-height: 44px; border-bottom: 1px solid var(--border); }
+  .check-row:last-child { border-bottom: none; }
+  .check-row input { width: 24px; height: 24px; accent-color: var(--primary); flex-shrink: 0; }
+  .check-row .grow { flex: 1; min-width: 0; }
+  .dupbox { background: var(--primary-soft); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+  .dupbox a.row { background: var(--surface); border-radius: var(--radius-sm); border: 1px solid var(--border); margin-bottom: 8px; }
+  .dupbox .btns { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+
+  .combo { position: relative; }
+  .combo-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; max-height: 240px; overflow-y: auto; background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); z-index: 25; }
+  .combo-item { padding: 10px 14px; min-height: 44px; cursor: pointer; display: flex; flex-direction: column; justify-content: center; }
+  .combo-item:active, .combo-item:hover { background: var(--primary-soft); }
+  .combo-item .s { font-size: 12px; color: var(--text-muted); }
+  .combo-empty { padding: 12px 14px; color: var(--text-muted); font-size: 14px; }
+
+  /* ============ SHEET, TOAST, CONFIRM ============ */
+  .sheet-back { position: fixed; inset: 0; background: rgba(46, 42, 51, 0.35); z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+  .sheet { background: var(--surface); width: 100%; max-width: 720px; border-radius: var(--radius) var(--radius) 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+  .sheet .btn { width: 100%; margin-bottom: 10px; }
+  .sheet .btn:last-child { margin-bottom: 0; }
+  .toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); background: var(--primary-dark); color: #fff; padding: 12px 18px; border-radius: 999px; font-size: 14px; z-index: 90; max-width: 90%; box-shadow: var(--shadow); }
+  .confirm-overlay { position: fixed; inset: 0; background: rgba(46, 42, 51, 0.35); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+  .confirm-overlay.show { display: flex; }
+  .confirm-card { background: var(--surface); border-radius: var(--radius); padding: 32px 28px; text-align: center; max-width: 320px; box-shadow: 0 8px 30px rgba(46,42,51,0.15); }
+  .confirm-check { width: 56px; height: 56px; border-radius: 50%; background: var(--success-soft); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; }
+  .confirm-check svg { width: 28px; height: 28px; }
+  .confirm-check circle { stroke: var(--success); stroke-width: 2; fill: none; stroke-dasharray: 63; stroke-dashoffset: 63; animation: circleDraw 0.5s ease forwards; }
+  .confirm-check path { stroke: var(--success); stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 20; stroke-dashoffset: 20; animation: checkDraw 0.3s ease forwards 0.45s; }
+  @keyframes circleDraw { to { stroke-dashoffset: 0; } }
+  @keyframes checkDraw { to { stroke-dashoffset: 0; } }
+  .confirm-title { font-size: 17px; font-weight: 700; margin: 0 0 6px; }
+  .confirm-sub { font-size: 14px; color: var(--text-muted); margin: 0; }
+
+  /* ============ FEATURE SPEC TABLE ============ */
+  .spec-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  table.spec { border-collapse: collapse; min-width: 1100px; font-size: 13px; }
+  table.spec th { text-align: left; background: var(--primary-soft); color: var(--primary-dark); padding: 10px; position: sticky; top: 0; }
+  table.spec td { vertical-align: top; padding: 10px; border-top: 1px solid var(--border); }
+  .spec-view main, body.spec-view main { max-width: none; }
+
+  @media (prefers-reduced-motion: reduce) { .confirm-check circle, .confirm-check path { animation: none; stroke-dashoffset: 0; } }
+</style>
+</head>
+<body>
+
+<header id="hdr">
+  <button class="icon-btn" id="backBtn" aria-label="Back" hidden>&#8249;</button>
+  <div class="hdr-title"><div class="title" id="hTitle"></div><div class="subtitle" id="hSub"></div></div>
+  <div id="hActions"></div>
+</header>
+<main id="view"><div class="loading-note">Loading…</div></main>
+<div class="bar" id="bar" hidden></div>
+<div id="sheetHost"></div>
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-card">
+    <div class="confirm-check"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M7 12.5l3 3 7-7"></path></svg></div>
+    <p class="confirm-title" id="confirmTitle"></p>
+    <p class="confirm-sub" id="confirmSub"></p>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ====================================================================
+   CRM front end — generic relationship tool (one HTML file)
+
+   Structure:
+     CORE            state, API, data index, router, UI and form helpers
+     FEATURE BLOCKS  F02 … F14, each between BEGIN/END markers and headed by
+                     a spec tag. A feature registers itself into REG (routes,
+                     home tabs, menus, org-page sections); deleting its block
+                     removes the feature and leaves the rest working.
+     F01             connect / identify / start-up (last, because it runs)
+   The Feature Spec view is generated from the spec tags at build time.
+   ==================================================================== */
+
+const S = {
+  url: '', key: '', me: '', cfg: {}, members: [], products: [], engagements: [], interactions: [], orgs: [],
+  lists: { stage: [], interactionType: [], orgType: [], source: [] }, idx: {}, ui: {}
+};
+const REG = { routes: {}, homeTabs: [], addMenu: [], orgSections: [], orgActions: [], settingsItems: [], acts: {} };
+const STAGE_OPEN = ['New', 'In progress'];
+const STAGE_NI = 'Not interested';
+function activeOrgs() { return S.orgs.filter(o => o['Record Status'] !== 'Archived'); }
+
+/* ---------- small utilities ---------- */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+const escA = esc;
+function isYes(v) { return String(v || '').trim().toLowerCase() === 'yes'; }
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); }
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function parseD(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ''); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN; }
+function daysBetween(a, b) { return Math.round((parseD(b) - parseD(a)) / 86400000); }
+function fmtD(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ''); return m ? (+m[3]) + ' ' + MON[+m[2] - 1] + ' ' + m[1] : ''; }
+function todayStr() { return S.cfg.today || ''; }
+function agoText(d) {
+  const n = daysBetween(d, todayStr());
+  if (isNaN(n)) return '';
+  return n === 0 ? 'today' : n === 1 ? 'yesterday' : n < 0 ? 'in ' + plural(-n, 'day') : plural(n, 'day') + ' ago';
+}
+
+/* ---------- per-device storage (never required to work) ---------- */
+const mem = {};
+let NS = 'crm.';
+const store = {
+  get(k) { try { return localStorage.getItem(NS + k); } catch (e) { return mem[NS + k] || null; } },
+  set(k, v) { try { localStorage.setItem(NS + k, v); } catch (e) { mem[NS + k] = v; } },
+  del(k) { try { localStorage.removeItem(NS + k); } catch (e) { delete mem[NS + k]; } }
+};
+
+/* ---------- API ---------- */
+async function api(action, payload, isWrite) {
+  const body = Object.assign({ action: action, key: S.key }, payload || {});
+  let res;
+  try {
+    if (isWrite) {
+      res = await fetch(S.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+    } else {
+      const q = Object.keys(body).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(body[k])).join('&');
+      res = await fetch(S.url + (S.url.indexOf('?') >= 0 ? '&' : '?') + q);
+    }
+  } catch (e) {
+    throw new Error("Couldn't reach the tool. Check the connection and try again.");
+  }
+  let json;
+  try { json = await res.json(); } catch (e) { throw new Error('The tool sent back something unexpected. Check the web app address.'); }
+  if (!json.ok) throw new Error(json.error || 'Something went wrong.');
+  return json.data;
+}
+
+/* ---------- data, index, derived values ---------- */
+function upsert(list, keyName, obj) {
+  const i = list.findIndex(x => x[keyName] === obj[keyName]);
+  if (i >= 0) list[i] = obj; else list.push(obj);
+}
+function activeNames() { return S.members.filter(m => isYes(m['Active'])).map(m => m['Name']).sort((a, b) => a.localeCompare(b)); }
+function resolveOrgId(id) {
+  for (let hop = 0; hop < 6; hop++) {
+    const o = S.idx.org[id];
+    if (!o) return id;
+    if (o['Record Status'] === 'Archived' && o['Archived To']) id = o['Archived To']; else return id;
+  }
+  return id;
+}
+function reindex() {
+  const I = S.idx = { org: {}, prod: {}, eng: {}, engByOrg: {}, intByOrg: {}, intByEng: {}, lastByEng: {}, lastByOrg: {} };
+  S.orgs.forEach(o => { I.org[o['Org ID']] = o; });
+  S.products.forEach(p => { I.prod[p['Product ID']] = p; });
+  S.engagements.forEach(e => {
+    I.eng[e['Engagement ID']] = e;
+    const oid = resolveOrgId(e['Org ID']);
+    (I.engByOrg[oid] = I.engByOrg[oid] || []).push(e);
+  });
+  S.interactions.forEach(i => {
+    const oid = resolveOrgId(i['Org ID']);
+    (I.intByOrg[oid] = I.intByOrg[oid] || []).push(i);
+    if (i['Engagement ID']) (I.intByEng[i['Engagement ID']] = I.intByEng[i['Engagement ID']] || []).push(i);
+  });
+  const byDateDesc = (a, b) => (b['Date'] + b['Interaction ID']).localeCompare(a['Date'] + a['Interaction ID']);
+  Object.keys(I.intByOrg).forEach(k => { I.intByOrg[k].sort(byDateDesc); I.lastByOrg[k] = I.intByOrg[k][0]['Date']; });
+  Object.keys(I.intByEng).forEach(k => { I.intByEng[k].sort(byDateDesc); I.lastByEng[k] = I.intByEng[k][0]['Date']; });
+}
+function productName(pid) { const p = S.idx.prod[pid]; return p ? p['Product Name'] : pid; }
+function orgName(oid) { const o = S.idx.org[oid]; return o ? o['Org Name'] : oid; }
+function engLabel(e) { return productName(e['Product ID']); }
+function isStale(e) {
+  if (STAGE_OPEN.indexOf(e['Stage']) < 0) return false;
+  const from = S.idx.lastByEng[e['Engagement ID']] || e['Start Date'];
+  return daysBetween(from, todayStr()) > (S.cfg.staleAfterDays || 90);
+}
+function stageClass(st) { return st === 'New' ? 'st-new' : st === 'In progress' ? 'st-prog' : st === 'Converted' ? 'st-conv' : st === STAGE_NI ? 'st-ni' : 'st-new'; }
+function stageBadge(st) { return '<span class="badge ' + stageClass(st) + '">' + esc(st) + '</span>'; }
+function coldBadge() { return '<span class="badge cold">Going cold</span>'; }
+function brandTitle() { return S.cfg.toolTitle || 'Relationships'; }
+
+/* ---------- branding from Config ---------- */
+function mixHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const ch = s => { const x = (pa >> s) & 255, y = (pb >> s) & 255; return Math.round(x + (y - x) * t); };
+  return '#' + [16, 8, 0].map(s => ch(s).toString(16).padStart(2, '0')).join('');
+}
+function applyBrand() {
+  const c = S.cfg.primaryColour || '';
+  document.title = brandTitle();
+  if (!/^#[0-9a-f]{6}$/i.test(c)) return;
+  const st = document.documentElement.style;
+  st.setProperty('--primary', c);
+  st.setProperty('--primary-dark', mixHex(c, '#000000', 0.25));
+  st.setProperty('--primary-soft', mixHex(c, '#ffffff', 0.88));
+}
+
+/* ---------- chrome, router, sheets, toasts ---------- */
+function setChrome(o) {
+  $('#hTitle').textContent = o.title || '';
+  $('#hSub').textContent = o.sub || '';
+  $('#backBtn').hidden = !o.back;
+  $('#hActions').innerHTML = o.actions || '';
+}
+function setBar(html) {
+  const b = $('#bar');
+  if (!html) { b.hidden = true; b.innerHTML = ''; return; }
+  b.hidden = false;
+  b.innerHTML = '<div class="bar-error" id="barError"></div><div class="bar-inner">' + html + '</div>';
+}
+function show(html, bar) { $('#view').innerHTML = html; setBar(bar); }
+function page(title, back) { document.body.classList.remove('spec-view'); setChrome({ title: title, sub: '', back: back !== false }); }
+
+const navStack = [];
+let replacing = false;
+function go(path) { location.hash = '#/' + path; }
+function replace(path) { replacing = true; location.replace('#/' + path); }
+function back() { if (navStack.length > 1) history.back(); else location.hash = '#/home'; }
+function onHash() {
+  const h = location.hash || '#/home';
+  if (replacing && navStack.length) navStack[navStack.length - 1] = h;
+  else if (navStack.length >= 2 && navStack[navStack.length - 2] === h) navStack.pop();
+  else if (navStack[navStack.length - 1] !== h) navStack.push(h);
+  replacing = false;
+  route();
+}
+function route() {
+  closeSheet();
+  const h = (location.hash || '#/home').replace(/^#\/?/, '');
+  const parts = h.split('/').map(decodeURIComponent);
+  const name = parts.shift() || 'home';
+  const fn = REG.routes[name] || REG.routes.home;
+  window.scrollTo(0, 0);
+  try { fn(parts); }
+  catch (e) { console.error(e); show('<div class="empty">Something went wrong showing this page.</div>'); }
+}
+function openSheet(html) { $('#sheetHost').innerHTML = '<div class="sheet-back" data-act="core.closeSheet"><div class="sheet">' + html + '</div></div>'; }
+function closeSheet() { $('#sheetHost').innerHTML = ''; }
+let toastTimer = null;
+function toast(msg) {
+  let t = $('#toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
+}
+function confirmed(title, sub) {
+  const o = $('#confirmOverlay');
+  $('#confirmTitle').textContent = title; $('#confirmSub').textContent = sub || '';
+  o.classList.add('show');
+  $$('circle, path', o).forEach(el => { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; });
+  setTimeout(() => o.classList.remove('show'), 1500);
+}
+
+/* ---------- delegated events ---------- */
+document.addEventListener('click', e => {
+  const chip = e.target.closest('.chips .chip[data-v]');
+  if (chip && !chip.classList.contains('disabled')) {
+    const g = chip.closest('.chips');
+    if (g.hasAttribute('data-multi')) chip.classList.toggle('selected');
+    else { $$('.chip', g).forEach(c => c.classList.remove('selected')); chip.classList.add('selected'); }
+    g.dispatchEvent(new CustomEvent('chipchange', { bubbles: true, detail: { v: chip.dataset.v } }));
+    return;
+  }
+  const item = e.target.closest('.combo-item');
+  if (item) { comboPick(item.closest('.combo'), item.dataset.v); return; }
+  $$('.combo-list').forEach(l => { if (!l.closest('.combo').contains(e.target)) l.hidden = true; });
+  const a = e.target.closest('[data-act]');
+  if (a && REG.acts[a.dataset.act]) REG.acts[a.dataset.act](a, e);
+});
+REG.acts['core.closeSheet'] = (el, e) => { if (e.target === el) closeSheet(); };
+REG.acts['core.back'] = () => back();
+$('#backBtn').addEventListener('click', back);
+
+/* ---------- form helpers ---------- */
+function labelHtml(label, req) { return '<label class="field-label">' + esc(label) + (req ? '' : ' <span class="optional">optional</span>') + '</label>'; }
+function fieldWrap(key, inner, o) {
+  return '<div class="field" data-f="' + escA(key) + '"' + (o.req ? ' data-req="1"' : '') + (o.cond ? ' data-cond="' + escA(o.cond) + '"' : '') + (o.hidden ? ' hidden' : '') + '>' + inner + '</div>';
+}
+function fText(key, label, o) {
+  o = o || {};
+  const v = o.value || '';
+  const inner = labelHtml(label, o.req) + (o.area
+    ? '<textarea data-k="' + escA(key) + '" rows="' + (o.rows || 3) + '" placeholder="' + escA(o.placeholder || '') + '">' + esc(v) + '</textarea>'
+    : '<input type="' + (o.type || 'text') + '" data-k="' + escA(key) + '" value="' + escA(v) + '" placeholder="' + escA(o.placeholder || '') + '" autocomplete="off">');
+  return fieldWrap(key, inner, o);
+}
+function fDate(key, label, o) {
+  o = o || {};
+  const inner = labelHtml(label, o.req) + '<input type="date" data-k="' + escA(key) + '" value="' + escA(o.value || '') + '"' + (o.min ? ' min="' + escA(o.min) + '"' : '') + (o.max ? ' max="' + escA(o.max) + '"' : '') + '>';
+  return fieldWrap(key, inner, o);
+}
+function optVal(x) { return typeof x === 'string' ? { v: x, l: x } : x; }
+function fSelect(key, label, options, o) {
+  o = o || {};
+  const opts = options.map(optVal).map(x => '<option value="' + escA(x.v) + '"' + (x.v === o.value ? ' selected' : '') + '>' + esc(x.l) + '</option>').join('');
+  const inner = labelHtml(label, o.req) + '<select data-k="' + escA(key) + '"><option value="">' + esc(o.blank || (o.req ? 'Select…' : '—')) + '</option>' + opts + '</select>';
+  return fieldWrap(key, inner, o);
+}
+function fChips(key, label, options, o) {
+  o = o || {};
+  const sel = Array.isArray(o.value) ? o.value : (o.value ? [o.value] : []);
+  const chips = options.map(optVal).map(x => '<div class="chip' + (sel.indexOf(x.v) >= 0 ? ' selected' : '') + (x.disabled ? ' disabled' : '') + '" data-v="' + escA(x.v) + '">' + esc(x.l) + '</div>').join('');
+  const inner = labelHtml(label, o.req) + '<div class="chips"' + (o.multi ? ' data-multi="1"' : '') + '>' + chips + '</div>';
+  return fieldWrap(key, inner, o);
+}
+// Chips for six options or fewer, a dropdown for longer lists (design spec).
+function fChoice(key, label, options, o) {
+  o = o || {};
+  return (o.multi || options.length <= 6) ? fChips(key, label, options, o) : fSelect(key, label, options, o);
+}
+const COMBOS = {};
+let comboN = 0;
+function fCombo(key, label, items, o) {
+  o = o || {};
+  const id = 'cb' + (++comboN);
+  COMBOS[id] = items;
+  const cur = items.find(x => x.v === o.value);
+  const inner = labelHtml(label, o.req) + '<div class="combo" data-combo="' + id + '"><input type="text" class="combo-in" autocomplete="off" placeholder="' + escA(o.placeholder || 'Start typing…') + '" value="' + escA(cur ? cur.l : '') + '"><input type="hidden" data-k="' + escA(key) + '" value="' + escA(cur ? cur.v : '') + '"><div class="combo-list" hidden></div></div>';
+  return fieldWrap(key, inner, o);
+}
+function comboRender(box) {
+  const items = COMBOS[box.dataset.combo] || [];
+  const q = $('.combo-in', box).value.trim().toLowerCase();
+  const list = $('.combo-list', box);
+  const m = items.filter(x => !q || (x.l + ' ' + (x.s || '')).toLowerCase().indexOf(q) >= 0).slice(0, 40);
+  list.innerHTML = m.length ? m.map(x => '<div class="combo-item" data-v="' + escA(x.v) + '">' + esc(x.l) + (x.s ? '<span class="s">' + esc(x.s) + '</span>' : '') + '</div>').join('') : '<div class="combo-empty">No match</div>';
+  list.hidden = false;
+}
+function comboPick(box, v) {
+  const x = (COMBOS[box.dataset.combo] || []).find(i => i.v === v);
+  if (!x) return;
+  $('.combo-in', box).value = x.l; $('[data-k]', box).value = x.v; $('.combo-list', box).hidden = true;
+  box.dispatchEvent(new CustomEvent('combochange', { bubbles: true, detail: { v: x.v } }));
+}
+document.addEventListener('input', e => {
+  if (e.target.classList.contains('combo-in')) { const box = e.target.closest('.combo'); $('[data-k]', box).value = ''; comboRender(box); }
+});
+document.addEventListener('focusin', e => { if (e.target.classList.contains('combo-in')) comboRender(e.target.closest('.combo')); });
+
+function fieldVal(w) {
+  const ch = $('.chips', w);
+  if (ch) { const sel = $$('.chip.selected', ch).map(c => c.dataset.v); return ch.hasAttribute('data-multi') ? sel : (sel[0] || ''); }
+  const i = $('[data-k]', w);
+  return i ? i.value.trim() : '';
+}
+function fieldHidden(w) { return w.hidden || !!w.closest('[hidden]'); }
+// Hidden conditional fields are left out of the result (so they are never submitted).
+function readForm(root) {
+  const o = {};
+  $$('.field[data-f]', root).forEach(w => { if (!fieldHidden(w)) o[w.dataset.f] = fieldVal(w); });
+  return o;
+}
+function validateForm(root) {
+  const miss = $$('.field[data-req]', root).filter(w => !fieldHidden(w)).filter(w => { const v = fieldVal(w); return Array.isArray(v) ? !v.length : v === ''; });
+  if (!miss.length) return null;
+  miss[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  miss[0].classList.add('flash');
+  setTimeout(() => miss[0].classList.remove('flash'), 2000);
+  return 'Please complete: ' + miss.map(w => $('.field-label', w).textContent.trim()).join(', ');
+}
+function barError(msg) { const e = $('#barError'); if (e) { e.textContent = msg || ''; e.style.display = msg ? 'block' : 'none'; } }
+// Runs a save: validation message, busy button, and any error shown above the button.
+async function runSave(btn, fn) {
+  barError('');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try { await fn(); }
+  catch (e) { barError(e.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+
+/* ---------- shared renderers ---------- */
+function intRowHtml(i, o) {
+  o = o || {};
+  const eng = i['Engagement ID'] ? S.idx.eng[i['Engagement ID']] : null;
+  const fu = i['Follow-up Date'] && !isYes(i['Follow-up Done'])
+    ? ' <span class="' + (i['Follow-up Date'] < todayStr() ? 'overdue' : '') + '">Follow up ' + esc(fmtD(i['Follow-up Date'])) + '</span>' : '';
+  return '<div class="int"><div class="int-top"><b>' + esc(fmtD(i['Date'])) + '</b> · ' + esc(i['Type']) + ' · ' + esc(i['Logged By'])
+    + (o.showOrg ? ' · ' + esc(orgName(resolveOrgId(i['Org ID']))) : '') + (eng ? ' · ' + esc(engLabel(eng)) : '') + '</div>'
+    + '<div class="int-sum">' + esc(i['Summary']) + '</div>'
+    + (i['Spoke With'] ? '<div class="small muted">With ' + esc(i['Spoke With']) + '</div>' : '')
+    + ((i['Next Step'] || fu) ? '<div class="int-next">' + (i['Next Step'] ? 'Next: ' + esc(i['Next Step']) : '') + fu + '</div>' : '') + '</div>';
+}
+function contactsHtml(text) {
+  const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
+  return lines.map(line => {
+    const toks = line.split(',').map(t => t.trim()).filter(Boolean);
+    let name = '', roles = [], links = [];
+    toks.forEach((t, idx) => {
+      if (/^\+?[\d][\d\s().-]{6,}$/.test(t)) links.push('<a href="tel:' + escA(t.replace(/[\s().-]/g, '')) + '">' + esc(t) + '</a>');
+      else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) links.push('<a href="mailto:' + escA(t) + '">' + esc(t) + '</a>');
+      else if (!name && idx === 0) name = t;
+      else roles.push(t);
+    });
+    return '<div class="contact">' + (name ? '<div class="c-name">' + esc(name) + '</div>' : '') + (roles.length ? '<div class="c-role">' + esc(roles.join(', ')) + '</div>' : '')
+      + (links.length ? '<div class="c-links">' + links.join('') + '</div>' : '') + '</div>';
+  }).join('');
+}
+// Shared by Add organisation (F04) and Edit organisation (F05).
+function orgFormHtml(o) {
+  o = o || {};
+  return '<div class="card">'
+    + fText('Org Name', 'Organisation name', { req: true, value: o['Org Name'] })
+    + fChoice('Org Type', 'Type', S.lists.orgType, { req: true, value: o['Org Type'] })
+    + '<div class="two">' + fText('City', 'City', { value: o['City'] }) + fText('State', 'State', { value: o['State'] }) + '</div>'
+    + fText('Website', 'Website', { value: o['Website'], type: 'url', placeholder: 'https://' })
+    + fChoice('Source', 'How did we come to know them?', S.lists.source, { value: o['Source'] })
+    + fText('Tags', 'Tags', { value: o['Tags'], placeholder: 'schools, mental health' })
+    + fText('About', 'About', { value: o['About'], area: true, rows: 3 })
+    + fText('Contacts', 'Contacts', { value: o['Contacts'], area: true, rows: 5, placeholder: 'Name, role, phone, email\n(one person per line)' })
+    + '</div>';
+}
+
+/* ---------- home screen shell: tabs register themselves ---------- */
+REG.routes.home = function () {
+  setChrome({
+    title: brandTitle(), sub: S.cfg.workspaceName || '', back: false,
+    actions: (REG.addMenu.length ? '<button class="btn btn-sm btn-primary" data-act="core.add">+ Add</button>' : '') + '<button class="link-btn" data-act="core.settings">Settings</button>'
+  });
+  const tabs = REG.homeTabs.slice().sort((a, b) => a.order - b.order);
+  if (!tabs.length) { show('<div class="empty">Nothing to show yet.</div>'); return; }
+  let cur = tabs.find(t => t.id === S.ui.tab) || tabs[0];
+  S.ui.tab = cur.id;
+  show('<div class="identity-bar"><span>Using as <strong>' + esc(S.me) + '</strong></span><button class="link-btn" data-act="core.who">Not you?</button></div>'
+    + '<div class="tabs">' + tabs.map(t => '<button class="tab' + (t.id === cur.id ? ' active' : '') + '" data-act="core.tab" data-id="' + escA(t.id) + '">' + esc(t.label) + '</button>').join('') + '</div>'
+    + '<div id="tabBody"></div>');
+  cur.render($('#tabBody'));
+};
+REG.acts['core.tab'] = el => { S.ui.tab = el.dataset.id; REG.routes.home(); };
+REG.acts['core.settings'] = () => go('settings');
+REG.acts['core.add'] = () => {
+  openSheet(REG.addMenu.slice().sort((a, b) => a.order - b.order).map(m => '<button class="btn" data-act="core.addgo" data-route="' + escA(m.route) + '">' + esc(m.label) + '</button>').join(''));
+};
+REG.acts['core.addgo'] = el => { closeSheet(); go(el.dataset.route); };
+
+/* ---------- settings screen: features add their own links ---------- */
+REG.routes.settings = function () {
+  page('Settings');
+  const groups = {};
+  REG.settingsItems.slice().sort((a, b) => a.order - b.order).forEach(it => { (groups[it.group] = groups[it.group] || []).push(it); });
+  show(Object.keys(groups).map(g => '<div class="card"><div class="card-title">' + esc(g) + '</div><div class="list" style="box-shadow:none;border:none;margin:0">'
+    + groups[g].map(it => '<a class="row" href="#/' + escA(it.route) + '"><div class="row-title">' + esc(it.label) + '</div></a>').join('') + '</div></div>').join('')
+    + '<div class="card"><div class="card-title">This device</div>'
+    + '<div class="row-top" style="margin-bottom:6px"><div>Using as <strong>' + esc(S.me) + '</strong></div><button class="link-btn" data-act="core.who">Change</button></div>'
+    + '<div class="row-top"><div class="muted">Fetch the latest data</div><button class="link-btn" data-act="core.reload">Reload</button></div>'
+    + '<div class="row-top"><div class="muted">Forget the team key on this device</div><button class="link-btn" data-act="core.forget">Disconnect</button></div></div>');
+};
+
+
+/* ==== BEGIN F02 — Organisation search and filter ============================ */
+/* @spec F02
+ * Feature: Organisation search and filter
+ * Status: New
+ * Screen: Home > Organisations
+ * Delta: New home tab. Search box, a Filters panel (type, city, tag, owner, stage) and a list of active organisations.
+ * Validations: Form: none; every filter is optional.
+ * Calculations: Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Owner and Stage filters match organisations that have at least one engagement of this team meeting both [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the team's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].
+ * Dependencies: Org Master (Orgs); Engagements; Products; F03 (row opens the organisation page).
+ * @end */
+const F02 = { q: '', type: '', city: '', tag: '', owner: '', stage: '', open: false, shown: 60 };
+REG.homeTabs.push({ id: 'orgs', label: 'Organisations', order: 1, render: f02_render });
+
+function f02_active() { return activeOrgs(); }
+function f02_tagsOf(o) { return String(o['Tags'] || '').split(',').map(t => t.trim()).filter(Boolean); }
+function f02_distinct(arr) { return Array.from(new Set(arr.filter(Boolean))).sort((a, b) => a.localeCompare(b)); }
+function f02_filterCount() { return ['type', 'city', 'tag', 'owner', 'stage'].filter(k => F02[k]).length; }
+function f02_match(o) {
+  if (F02.q) {
+    const hay = [o['Org Name'], o['City'], o['State'], o['Tags'], o['Contacts']].join(' ').toLowerCase();
+    if (!F02.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.indexOf(w) >= 0)) return false;
+  }
+  if (F02.type && o['Org Type'] !== F02.type) return false;
+  if (F02.city && o['City'] !== F02.city) return false;
+  if (F02.tag && f02_tagsOf(o).map(t => t.toLowerCase()).indexOf(F02.tag.toLowerCase()) < 0) return false;
+  if (F02.owner || F02.stage) {
+    const es = S.idx.engByOrg[o['Org ID']] || [];
+    if (!es.some(e => (!F02.owner || e['Owner'] === F02.owner) && (!F02.stage || e['Stage'] === F02.stage))) return false;
+  }
+  return true;
+}
+function f02_select(id, label, opts, val) {
+  return '<div class="field"><label class="field-label">' + esc(label) + '</label><select id="' + id + '"><option value="">All</option>'
+    + opts.map(o => '<option' + (o === val ? ' selected' : '') + '>' + esc(o) + '</option>').join('') + '</select></div>';
+}
+function f02_render(host) {
+  const orgs = f02_active();
+  const owners = f02_distinct(S.engagements.map(e => e['Owner']));
+  const tags = f02_distinct([].concat.apply([], orgs.map(f02_tagsOf)));
+  host.innerHTML = '<div class="searchrow"><input type="search" id="f02q" placeholder="Search name, city, tag, contact" value="' + escA(F02.q) + '">'
+    + '<button class="btn btn-sm" id="f02fbtn">Filters' + (f02_filterCount() ? ' (' + f02_filterCount() + ')' : '') + '</button></div>'
+    + '<div class="filter-panel" id="f02panel"' + (F02.open ? '' : ' hidden') + '>'
+    + f02_select('f02type', 'Type', S.lists.orgType, F02.type) + f02_select('f02city', 'City', f02_distinct(orgs.map(o => o['City'])), F02.city)
+    + f02_select('f02tag', 'Tag', tags, F02.tag) + f02_select('f02owner', 'Owner', owners, F02.owner)
+    + f02_select('f02stage', 'Stage', S.lists.stage, F02.stage)
+    + '<div class="wide"><button class="link-btn" id="f02clear">Clear filters</button></div></div>'
+    + '<div class="count-line" id="f02count"></div><div id="f02list"></div>';
+  $('#f02q').addEventListener('input', e => { F02.q = e.target.value; F02.shown = 60; f02_list(); });
+  $('#f02fbtn').addEventListener('click', () => { F02.open = !F02.open; $('#f02panel').hidden = !F02.open; });
+  [['f02type', 'type'], ['f02city', 'city'], ['f02tag', 'tag'], ['f02owner', 'owner'], ['f02stage', 'stage']].forEach(p => {
+    $('#' + p[0]).addEventListener('change', e => { F02[p[1]] = e.target.value; F02.shown = 60; $('#f02fbtn').textContent = 'Filters' + (f02_filterCount() ? ' (' + f02_filterCount() + ')' : ''); f02_list(); });
+  });
+  $('#f02clear').addEventListener('click', () => { ['type', 'city', 'tag', 'owner', 'stage'].forEach(k => { F02[k] = ''; }); f02_render(host); });
+  f02_list();
+}
+function f02_row(o) {
+  const es = (S.idx.engByOrg[o['Org ID']] || []).slice(0, 2);
+  const more = (S.idx.engByOrg[o['Org ID']] || []).length - es.length;
+  return '<a class="row" href="#/org/' + escA(o['Org ID']) + '"><div class="row-title">' + esc(o['Org Name']) + '</div>'
+    + '<div class="row-sub">' + esc([o['Org Type'], o['City']].filter(Boolean).join(' · ')) + '</div>'
+    + (es.length ? '<div class="row-tags">' + es.map(e => '<span class="badge ' + stageClass(e['Stage']) + '">' + esc(engLabel(e)) + ' · ' + esc(e['Stage']) + '</span>').join('') + (more > 0 ? '<span class="badge">+' + more + '</span>' : '') + '</div>' : '') + '</a>';
+}
+function f02_list() {
+  const all = f02_active();
+  const m = all.filter(f02_match).sort((a, b) => a['Org Name'].localeCompare(b['Org Name']));
+  $('#f02count').textContent = plural(m.length, 'organisation');
+  if (!all.length) { $('#f02list').innerHTML = '<div class="empty">No organisations yet.' + (REG.routes['new-org'] ? '<br><a class="btn btn-primary" href="#/new-org">Add the first one</a>' : '') + '</div>'; return; }
+  if (!m.length) {
+    $('#f02list').innerHTML = '<div class="empty">Nothing matches' + (F02.q ? ' “' + esc(F02.q) + '”' : '') + '.'
+      + (REG.routes['new-org'] && F02.q ? '<br><a class="btn btn-primary" href="#/new-org/' + encodeURIComponent(F02.q) + '">Add “' + esc(F02.q) + '” as a new organisation</a>' : '') + '</div>';
+    return;
+  }
+  $('#f02list').innerHTML = '<div class="list">' + m.slice(0, F02.shown).map(f02_row).join('') + '</div>'
+    + (m.length > F02.shown ? '<div class="center"><button class="btn" id="f02more">Show more</button></div>' : '');
+  const more = $('#f02more'); if (more) more.addEventListener('click', () => { F02.shown += 60; f02_list(); });
+}
+/* ==== END F02 ================================================================ */
+
+/* ==== BEGIN F03 — Organisation briefing page ================================= */
+/* @spec F03
+ * Feature: Organisation briefing page
+ * Status: New
+ * Screen: Organisation page (opened from any list)
+ * Delta: New screen: name, type, place, website, tags, last contact, contacts, about, the team's engagements and recent interactions, and who created and last updated the record.
+ * Validations: Form: none (read-only page).
+ * Calculations: Last contact is the latest interaction Date among this team's interactions with the organisation [CONFIRMED]. Opening an archived organisation shows the organisation named in Archived To instead [CONFIRMED]. Engagements and interactions recorded against an archived Org ID appear on the replacement organisation [CONFIRMED]. Phone numbers and email addresses in Contacts become tappable links [CONFIRMED]. Created by and Last updated by show Name (Workspace Name) so another team can see whom to ask [CONFIRMED].
+ * Dependencies: Org Master (Orgs); Engagements; Interactions; sections added by F08 and F10; actions added by F05, F06, F07 and F10.
+ * @end */
+REG.routes.org = function (args) {
+  const id = args[0];
+  const rid = resolveOrgId(id);
+  if (rid !== id) { replace('org/' + rid); return; }
+  const o = S.idx.org[id];
+  page(o ? o['Org Name'] : 'Organisation');
+  if (!o) { show('<div class="empty">That organisation could not be found.</div>'); return; }
+  const last = S.idx.lastByOrg[id];
+  const place = [o['City'], o['State']].filter(Boolean).join(', ');
+  const tags = String(o['Tags'] || '').split(',').map(t => t.trim()).filter(Boolean);
+  let html = (o['Record Status'] === 'Archived' ? '<div class="banner">This record has been archived.</div>' : '')
+    + '<div class="card"><div class="org-name">' + esc(o['Org Name']) + '</div>'
+    + '<div class="badges"><span class="badge tag">' + esc(o['Org Type']) + '</span>' + (o['Source'] ? '<span class="badge">' + esc(o['Source']) + '</span>' : '') + '</div>'
+    + (place ? '<div class="muted">' + esc(place) + '</div>' : '')
+    + (o['Website'] ? '<div><a href="' + escA(o['Website']) + '" target="_blank" rel="noopener">' + esc(o['Website'].replace(/^https?:\/\//, '')) + '</a></div>' : '')
+    + (tags.length ? '<div class="row-tags">' + tags.map(t => '<span class="badge tag">' + esc(t) + '</span>').join('') + '</div>' : '')
+    + (last ? '<div class="small muted" style="margin-top:8px">Last contact ' + esc(fmtD(last)) + ' (' + esc(agoText(last)) + ')</div>' : '') + '</div>'
+    + '<div class="card"><div class="card-title">Contacts</div>' + (String(o['Contacts'] || '').trim() ? contactsHtml(o['Contacts']) : '<div class="muted">No contacts added yet.</div>') + '</div>'
+    + (o['About'] ? '<div class="card"><div class="card-title">About</div><div class="about-text">' + esc(o['About']) + '</div></div>' : '');
+  REG.orgSections.slice().sort((a, b) => a.order - b.order).forEach(s => { html += s.html(o); });
+  const menu = REG.orgActions.filter(a => a.placement === 'menu').sort((a, b) => a.order - b.order);
+  html += '<div class="card"><div class="meta">Added by ' + esc(o['Created By']) + ' · ' + esc(fmtD(o['Created On'])) + '</div>'
+    + '<div class="meta">Last updated by ' + esc(o['Last Updated By']) + ' · ' + esc(fmtD(o['Last Updated On'])) + '</div>'
+    + (menu.length && o['Record Status'] !== 'Archived' ? '<div class="meta-actions">' + menu.map(a => '<a class="link-btn" href="#/' + escA(a.route(o)) + '">' + esc(a.label) + '</a>').join('') + '</div>' : '') + '</div>';
+  const bar = o['Record Status'] === 'Archived' ? '' : REG.orgActions.filter(a => a.placement === 'bar').sort((a, b) => a.order - b.order)
+    .map(a => '<a class="btn' + (a.primary ? ' btn-primary' : '') + '" href="#/' + escA(a.route(o)) + '">' + esc(a.label) + '</a>').join('');
+  show(html, bar);
+  REG.orgSections.forEach(s => { if (s.wire) s.wire($('#view'), o); });
+};
+/* ==== END F03 ================================================================ */
+
+/* ==== BEGIN F04 — Add organisation =========================================== */
+/* @spec F04
+ * Feature: Add organisation
+ * Status: New
+ * Screen: Home > Add > Organisation
+ * Delta: New form and a duplicate warning. Entry point is registered in the Add menu; the form can be opened from an empty search with the typed name filled in.
+ * Validations: Form: Organisation name and Type are required; the page scrolls to the first missing field and nothing is saved. Website is accepted with or without https://. The server repeats every check.
+ * Calculations: Before saving, existing records with the same name (ignoring case and spaces) or the same website domain are listed with Open and Add anyway [CONFIRMED]. Org ID, stamps and the counter are set by the server on save [CONFIRMED]. After saving, the new organisation page opens [CONFIRMED].
+ * Dependencies: Org Master (Orgs, Lists); Members; shared form helper orgFormHtml.
+ * @end */
+REG.addMenu.push({ order: 1, label: 'New organisation', route: 'new-org' });
+REG.routes['new-org'] = function (args) {
+  page('New organisation');
+  show('<div id="f04dup"></div>' + orgFormHtml({ 'Org Name': args[0] || '' }), '<button class="btn btn-primary" id="f04save">Save organisation</button>');
+  $('#f04save').addEventListener('click', () => f04_save(false));
+};
+function f04_dupHtml(dups) {
+  return '<div class="dupbox"><div class="card-title" style="margin-bottom:8px">Already on the list?</div>'
+    + dups.map(d => '<a class="row" href="#/org/' + escA(d.orgId) + '"><div class="row-title">' + esc(d.name) + '</div><div class="row-sub">' + esc([d.type, d.city].filter(Boolean).join(' · ')) + (d.recordStatus === 'Archived' ? ' · archived' : '') + ' · same ' + esc(d.reason) + '</div></a>').join('')
+    + '<div class="btns"><button class="btn btn-primary" id="f04force">Add anyway</button></div></div>';
+}
+function f04_save(force) {
+  const root = $('#view'), btn = $('#f04save');
+  const miss = validateForm(root);
+  if (miss) { barError(miss); return; }
+  runSave(btn, async () => {
+    const org = readForm(root);
+    const d = await api('addOrg', { by: S.me, org: org, force: !!force }, true);
+    if (d.duplicates) {
+      $('#f04dup').innerHTML = f04_dupHtml(d.duplicates);
+      $('#f04force').addEventListener('click', () => f04_save(true));
+      $('#f04dup').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    upsert(S.orgs, 'Org ID', d.org); reindex();
+    confirmed('Saved. ' + d.org['Org Name'] + ' is on the list.', '');
+    replace('org/' + d.org['Org ID']);
+  });
+}
+/* ==== END F04 ================================================================ */
+
+/* ==== BEGIN F05 — Edit organisation ========================================== */
+/* @spec F05
+ * Feature: Edit organisation
+ * Status: New
+ * Screen: Organisation page > Edit details
+ * Delta: New form, the same fields as Add organisation, filled with the saved values. Includes the Contacts and About text.
+ * Validations: Form: Organisation name and Type are required. The server repeats every check and refuses archived records.
+ * Calculations: Last Updated On and By are set by the server on every save [CONFIRMED]. Created On and By are not changed [CONFIRMED]. After saving, the organisation page opens [CONFIRMED].
+ * Dependencies: Org Master (Orgs, Lists); Members; shared form helper orgFormHtml.
+ * @end */
+REG.orgActions.push({ order: 1, placement: 'menu', label: 'Edit details', route: o => 'edit-org/' + o['Org ID'] });
+REG.routes['edit-org'] = function (args) {
+  const o = S.idx.org[args[0]];
+  page('Edit details');
+  if (!o || o['Record Status'] === 'Archived') { show('<div class="empty">This record cannot be edited.</div>'); return; }
+  show(orgFormHtml(o), '<button class="btn btn-primary" id="f05save">Save changes</button>');
+  $('#f05save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f05save'), async () => {
+      const d = await api('updateOrg', { by: S.me, orgId: o['Org ID'], fields: readForm(root) }, true);
+      upsert(S.orgs, 'Org ID', d.org); reindex();
+      confirmed('Saved.', 'The details are up to date.');
+      replace('org/' + o['Org ID']);
+    });
+  });
+};
+/* ==== END F05 ================================================================ */
+
+/* ==== BEGIN F06 — Mark organisation as duplicate ============================= */
+/* @spec F06
+ * Feature: Mark organisation as duplicate
+ * Status: New
+ * Screen: Organisation page > Mark as duplicate
+ * Delta: New screen to pick the record that replaces this one. Records are archived, never deleted or merged.
+ * Validations: Form: the replacement is required and is chosen from active organisations other than this one. The server repeats the checks.
+ * Calculations: After saving, the old record is hidden from search and lists and opening it shows the replacement; its engagements and interactions appear on the replacement [CONFIRMED].
+ * Dependencies: Org Master (Orgs); F03 (redirect and combined history).
+ * @end */
+REG.orgActions.push({ order: 2, placement: 'menu', label: 'Mark as duplicate', route: o => 'archive-org/' + o['Org ID'] });
+REG.routes['archive-org'] = function (args) {
+  const o = S.idx.org[args[0]];
+  page('Mark as duplicate');
+  if (!o || o['Record Status'] === 'Archived') { show('<div class="empty">This record cannot be changed.</div>'); return; }
+  const items = f02_active().filter(x => x['Org ID'] !== o['Org ID']).sort((a, b) => a['Org Name'].localeCompare(b['Org Name'])).map(x => ({ v: x['Org ID'], l: x['Org Name'], s: [x['Org Type'], x['City']].filter(Boolean).join(' · ') }));
+  show('<div class="card"><div class="org-name">' + esc(o['Org Name']) + '</div><div class="muted">is the same as…</div><div style="margin-top:12px">'
+    + fCombo('archivedTo', 'Keep this record instead', items, { req: true, placeholder: 'Search organisations' }) + '</div></div>',
+    '<button class="btn btn-primary" id="f06save">Mark as duplicate</button>');
+  $('#f06save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f06save'), async () => {
+      const to = readForm(root)['archivedTo'];
+      const d = await api('archiveOrg', { by: S.me, orgId: o['Org ID'], archivedTo: to }, true);
+      upsert(S.orgs, 'Org ID', d.org); reindex();
+      confirmed('Done.', 'Everything now shows under ' + orgName(to) + '.');
+      replace('org/' + to);
+    });
+  });
+};
+/* ==== END F06 ================================================================ */
+
+
+/* ==== BEGIN F07 — Add engagements ============================================ */
+/* @spec F07
+ * Feature: Add engagements
+ * Status: New
+ * Screen: Organisation page > Add engagement
+ * Delta: New form. Several products can be ticked in one save, which creates one engagement per product. Products that already have an engagement with this organisation are shown crossed out and cannot be ticked.
+ * Validations: Form: at least one product, an owner and a start date are required. Only active products are offered. Key contact, expectations and the document link are optional. The server repeats every check, including one engagement per organisation and product.
+ * Calculations: Stage starts as New [CONFIRMED]. The owner defaults to the person using the tool [CONFIRMED]. Start date defaults to today [CONFIRMED]. After saving, the organisation page opens [CONFIRMED].
+ * Dependencies: Products; Members; Engagements; F12 (products must exist).
+ * @end */
+REG.orgActions.push({ order: 2, placement: 'bar', label: 'Add engagement', route: o => 'add-eng/' + o['Org ID'] });
+REG.routes['add-eng'] = function (args) {
+  const o = S.idx.org[args[0]];
+  page('Add engagement');
+  if (!o || o['Record Status'] === 'Archived') { show('<div class="empty">This organisation cannot take new engagements.</div>'); return; }
+  const prods = S.products.filter(p => isYes(p['Active']));
+  if (!prods.length) { show('<div class="empty">There are no products yet.' + (REG.routes.products ? '<br><a class="btn btn-primary" href="#/products">Add products</a>' : '') + '</div>'); return; }
+  const taken = (S.idx.engByOrg[o['Org ID']] || []).map(e => e['Product ID']);
+  show('<div class="card"><div class="org-name">' + esc(o['Org Name']) + '</div>'
+    + fChips('Products', 'Products or services', prods.map(p => ({ v: p['Product ID'], l: p['Product Name'], disabled: taken.indexOf(p['Product ID']) >= 0 })), { multi: true, req: true })
+    + fChoice('Owner', 'Owner', activeNames(), { req: true, value: S.me })
+    + fText('Key Contact', 'Key contact', { placeholder: 'Name and role' })
+    + fText('Expectations', 'What do they expect?', { area: true, rows: 3 })
+    + fDate('Start Date', 'First discussed on', { req: true, value: todayStr() })
+    + fText('Document Link', 'Document link', { type: 'url', placeholder: 'https://' }) + '</div>',
+    '<button class="btn btn-primary" id="f07save">Save</button>');
+  $('#f07save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f07save'), async () => {
+      const f = readForm(root);
+      const d = await api('addEngagements', { by: S.me, orgId: o['Org ID'], productIds: f['Products'], owner: f['Owner'], keyContact: f['Key Contact'], expectations: f['Expectations'], startDate: f['Start Date'], documentLink: f['Document Link'] }, true);
+      d.engagements.forEach(e => upsert(S.engagements, 'Engagement ID', e)); reindex();
+      confirmed('Added.', plural(d.engagements.length, 'engagement') + ' started for ' + o['Org Name'] + '.');
+      replace('org/' + o['Org ID']);
+    });
+  });
+};
+/* ==== END F07 ================================================================ */
+
+/* ==== BEGIN F08 — Engagement page and update ================================= */
+/* @spec F08
+ * Feature: Engagement page and update
+ * Status: New
+ * Screen: Organisation page > Engagements; Engagement page; Engagement page > Edit
+ * Delta: New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page.
+ * Validations: Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the stage is Not interested. The server repeats every check.
+ * Calculations: Tapping a stage saves it at once and sets Stage Changed On to today; tapping Not interested opens the edit form so the reason can be added [CONFIRMED]. Last contact is the latest interaction Date for the engagement [CONFIRMED]. An engagement is flagged Going cold when its stage is New or In progress and the days since its last interaction (or its start date if there is none) exceed Stale After Days [CONFIRMED]. Converted and Not interested engagements are never flagged [CONFIRMED]. Engagements on the organisation page are ordered New and In progress first, then Converted, then Not interested, newest start first [CONFIRMED].
+ * Dependencies: Engagements; Products; Interactions; Lists (Team): Stage; Config: Stale After Days; Members.
+ * @end */
+function f08_order(e) { const i = ['New', 'In progress', 'Converted', STAGE_NI].indexOf(e['Stage']); return i < 0 ? 9 : i; }
+REG.orgSections.push({
+  order: 20,
+  html: o => {
+    const es = (S.idx.engByOrg[o['Org ID']] || []).slice().sort((a, b) => (f08_order(a) - f08_order(b)) || b['Start Date'].localeCompare(a['Start Date']));
+    return '<div class="card"><div class="card-title">Engagements</div>' + (es.length
+      ? '<div class="list" style="box-shadow:none;border:none;margin:0">' + es.map(e => {
+        const last = S.idx.lastByEng[e['Engagement ID']];
+        return '<a class="row" href="#/eng/' + escA(e['Engagement ID']) + '"><div class="row-top"><div><div class="row-title">' + esc(engLabel(e)) + '</div><div class="row-sub">' + esc(e['Owner']) + ' · ' + (last ? 'Last contact ' + esc(agoText(last)) : 'No contact yet') + '</div></div><div class="row-tags" style="margin:0">' + stageBadge(e['Stage']) + (isStale(e) ? coldBadge() : '') + '</div></div></a>';
+      }).join('') + '</div>' : '<div class="muted">No engagements yet.</div>') + '</div>';
+  }
+});
+REG.routes.eng = function (args) {
+  const e = S.idx.eng[args[0]];
+  page(e ? engLabel(e) : 'Engagement');
+  if (!e) { show('<div class="empty">That engagement could not be found.</div>'); return; }
+  const rid = resolveOrgId(e['Org ID']);
+  const last = S.idx.lastByEng[e['Engagement ID']];
+  const ints = S.idx.intByEng[e['Engagement ID']] || [];
+  const ni = e['Stage'] === STAGE_NI;
+  const rows = [['Owner', esc(e['Owner'])], ['Key contact', esc(e['Key Contact'] || '—')], ['First discussed', esc(fmtD(e['Start Date']))],
+    ['Stage since', esc(fmtD(e['Stage Changed On']))], ['Last contact', last ? esc(fmtD(last)) + ' (' + esc(agoText(last)) + ')' : 'None yet']];
+  if (ni) { rows.push(['Reason', esc(e['Not Interested Reason'] || '—')]); rows.push(['Revisit on', e['Revisit On'] ? esc(fmtD(e['Revisit On'])) : '—']); }
+  if (e['Document Link']) rows.push(['Document', '<a href="' + escA(e['Document Link']) + '" target="_blank" rel="noopener">Open</a>']);
+  const html = '<div class="card"><div class="org-name">' + esc(engLabel(e)) + '</div><div><a href="#/org/' + escA(rid) + '">' + esc(orgName(rid)) + '</a></div>'
+    + '<div class="badges">' + stageBadge(e['Stage']) + (isStale(e) ? coldBadge() : '') + '</div>'
+    + '<div class="field-label" style="margin:12px 0 8px">Change stage</div><div style="display:flex;flex-wrap:wrap;gap:8px">'
+    + S.lists.stage.map(st => '<button class="chip' + (st === e['Stage'] ? ' selected' : '') + '" data-act="f08.stage" data-id="' + escA(e['Engagement ID']) + '" data-v="' + escA(st) + '">' + esc(st) + '</button>').join('') + '</div></div>'
+    + '<div class="card"><dl class="kv">' + rows.map(r => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl></div>'
+    + (e['Expectations'] ? '<div class="card"><div class="card-title">Expectations</div><div class="about-text">' + esc(e['Expectations']) + '</div></div>' : '')
+    + '<div class="card"><div class="card-title">Interactions</div>' + (ints.length ? ints.map(i => intRowHtml(i)).join('') : '<div class="muted">Nothing logged yet.</div>') + '</div>';
+  show(html, (REG.routes.log ? '<a class="btn btn-primary" href="#/log/' + escA(rid) + '/' + escA(e['Engagement ID']) + '">Log interaction</a>' : '') + '<a class="btn" href="#/edit-eng/' + escA(e['Engagement ID']) + '">Edit</a>');
+};
+REG.acts['f08.stage'] = async el => {
+  const id = el.dataset.id, st = el.dataset.v, e = S.idx.eng[id];
+  if (!e || st === e['Stage']) return;
+  if (st === STAGE_NI) { go('edit-eng/' + id + '/ni'); return; }
+  try {
+    const d = await api('updateEngagement', { by: S.me, engagementId: id, fields: { Stage: st } }, true);
+    upsert(S.engagements, 'Engagement ID', d.engagement); reindex(); REG.routes.eng([id]); toast('Stage is now ' + st + '.');
+  } catch (err) { toast(err.message); }
+};
+REG.routes['edit-eng'] = function (args) {
+  const e = S.idx.eng[args[0]];
+  page('Edit engagement');
+  if (!e) { show('<div class="empty">That engagement could not be found.</div>'); return; }
+  const stage = args[1] === 'ni' ? STAGE_NI : e['Stage'];
+  const names = activeNames(); if (names.indexOf(e['Owner']) < 0) names.push(e['Owner']);
+  show('<div class="card"><div class="org-name">' + esc(engLabel(e)) + '</div><div class="muted" style="margin-bottom:14px">' + esc(orgName(resolveOrgId(e['Org ID']))) + '</div>'
+    + fChoice('Stage', 'Stage', S.lists.stage, { req: true, value: stage })
+    + fText('Not Interested Reason', 'Reason', { value: e['Not Interested Reason'], cond: STAGE_NI, hidden: stage !== STAGE_NI, area: true, rows: 2 })
+    + fDate('Revisit On', 'Revisit on', { value: e['Revisit On'], cond: STAGE_NI, hidden: stage !== STAGE_NI, min: e['Start Date'] })
+    + fChoice('Owner', 'Owner', names, { req: true, value: e['Owner'] })
+    + fText('Key Contact', 'Key contact', { value: e['Key Contact'] })
+    + fText('Expectations', 'What do they expect?', { value: e['Expectations'], area: true, rows: 3 })
+    + fDate('Start Date', 'First discussed on', { req: true, value: e['Start Date'] })
+    + fText('Document Link', 'Document link', { value: e['Document Link'], type: 'url', placeholder: 'https://' }) + '</div>',
+    '<button class="btn btn-primary" id="f08save">Save changes</button>');
+  $('#view').addEventListener('chipchange', ev => {
+    if (!ev.target.closest('[data-f="Stage"]')) return;
+    $$('.field[data-cond]', $('#view')).forEach(w => { w.hidden = w.dataset.cond !== ev.detail.v; });
+  });
+  $('#f08save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f08save'), async () => {
+      const d = await api('updateEngagement', { by: S.me, engagementId: e['Engagement ID'], fields: readForm(root) }, true);
+      upsert(S.engagements, 'Engagement ID', d.engagement); reindex();
+      confirmed('Saved.', 'The engagement is up to date.');
+      replace('eng/' + e['Engagement ID']);
+    });
+  });
+};
+/* ==== END F08 ================================================================ */
+
+/* ==== BEGIN F09 — Engagements work list ====================================== */
+/* @spec F09
+ * Feature: Engagements work list
+ * Status: New
+ * Screen: Home > Engagements
+ * Delta: New home tab listing the team's engagements with owner and stage filters and a Going cold flag.
+ * Validations: Form: none; both filters are optional.
+ * Calculations: The Owner filter starts as the person using the tool and can be set to All or another person [CONFIRMED]. The Stage filter starts as Open (New and In progress) and can be set to All or a single stage [CONFIRMED]. Going cold rows are listed first, then the longest since last contact first [CONFIRMED]. Each row shows the days since the last contact, or No contact yet [CONFIRMED].
+ * Dependencies: Engagements; Interactions; Products; Config: Stale After Days; F08 (row opens the engagement page).
+ * @end */
+const F09 = { owner: null, stage: 'open' };
+REG.homeTabs.push({ id: 'eng', label: 'Engagements', order: 2, render: f09_render });
+function f09_render(host) {
+  if (F09.owner === null) F09.owner = S.me;
+  const owners = Array.from(new Set(activeNames().concat(S.engagements.map(e => e['Owner'])))).sort((a, b) => a.localeCompare(b));
+  host.innerHTML = '<div class="filter-panel" style="margin-bottom:10px">'
+    + '<div class="field"><label class="field-label">Owner</label><select id="f09owner"><option value="">All</option>' + owners.map(n => '<option' + (n === F09.owner ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div>'
+    + '<div class="field"><label class="field-label">Stage</label><select id="f09stage"><option value="open"' + (F09.stage === 'open' ? ' selected' : '') + '>Open</option><option value="all"' + (F09.stage === 'all' ? ' selected' : '') + '>All</option>'
+    + S.lists.stage.map(s => '<option' + (s === F09.stage ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select></div></div>'
+    + '<div class="count-line" id="f09count"></div><div id="f09list"></div>';
+  $('#f09owner').addEventListener('change', e => { F09.owner = e.target.value; f09_list(); });
+  $('#f09stage').addEventListener('change', e => { F09.stage = e.target.value; f09_list(); });
+  f09_list();
+}
+function f09_list() {
+  const rows = S.engagements.filter(e => (!F09.owner || e['Owner'] === F09.owner) && (F09.stage === 'all' || (F09.stage === 'open' ? STAGE_OPEN.indexOf(e['Stage']) >= 0 : e['Stage'] === F09.stage)))
+    .map(e => { const last = S.idx.lastByEng[e['Engagement ID']]; return { e: e, cold: isStale(e), since: daysBetween(last || e['Start Date'], todayStr()), last: last, org: orgName(resolveOrgId(e['Org ID'])) }; })
+    .sort((a, b) => (b.cold - a.cold) || (b.since - a.since) || a.org.localeCompare(b.org));
+  $('#f09count').textContent = plural(rows.length, 'engagement');
+  $('#f09list').innerHTML = rows.length ? '<div class="list">' + rows.map(r => '<a class="row" href="#/eng/' + escA(r.e['Engagement ID']) + '"><div class="row-top"><div><div class="row-title">' + esc(r.org) + ' — ' + esc(engLabel(r.e)) + '</div>'
+    + '<div class="row-sub">' + esc(r.e['Owner']) + ' · ' + (r.last ? 'Last contact ' + esc(agoText(r.last)) : 'No contact yet') + '</div></div><div class="row-tags" style="margin:0">' + stageBadge(r.e['Stage']) + (r.cold ? coldBadge() : '') + '</div></div></a>').join('') + '</div>'
+    : '<div class="empty">Nothing here.</div>';
+}
+/* ==== END F09 ================================================================ */
+
+/* ==== BEGIN F10 — Log interaction ============================================ */
+/* @spec F10
+ * Feature: Log interaction
+ * Status: New
+ * Screen: Home > Add > Log interaction; Organisation page > Log interaction; Engagement page > Log interaction
+ * Delta: New form and a new Interactions list on the organisation page (latest five, with Show all). An interaction belongs to the organisation, with the engagement optional.
+ * Validations: Form: organisation (when not already chosen), date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The engagement choice lists only this organisation's engagements. The server repeats every check.
+ * Calculations: Date defaults to today and Logged by to the person using the tool [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. After saving, the engagement page opens when the form was started from an engagement, otherwise the organisation page [CONFIRMED].
+ * Dependencies: Interactions; Engagements; Org Master (Orgs); Lists (Team): Interaction Type; Members.
+ * @end */
+REG.addMenu.push({ order: 2, label: 'Log interaction', route: 'log' });
+REG.orgActions.push({ order: 1, placement: 'bar', primary: true, label: 'Log interaction', route: o => 'log/' + o['Org ID'] });
+function f10_engOptions(orgId) {
+  return (S.idx.engByOrg[orgId] || []).slice().sort((a, b) => f08_order(a) - f08_order(b)).map(e => ({ v: e['Engagement ID'], l: engLabel(e) + ' (' + e['Stage'] + ')' }));
+}
+function f10_fillEng(orgId, selected) {
+  const w = $('.field[data-f="Engagement ID"]'); if (!w) return;
+  const opts = f10_engOptions(orgId);
+  $('select', w).innerHTML = '<option value="">General, no specific product</option>' + opts.map(x => '<option value="' + escA(x.v) + '"' + (x.v === selected ? ' selected' : '') + '>' + esc(x.l) + '</option>').join('');
+  w.hidden = !opts.length;
+}
+REG.routes.log = function (args) {
+  const fixed = args[0] ? resolveOrgId(args[0]) : '';
+  const engId = args[1] || '';
+  page('Log interaction');
+  const items = activeOrgs().sort((a, b) => a['Org Name'].localeCompare(b['Org Name'])).map(o => ({ v: o['Org ID'], l: o['Org Name'], s: [o['Org Type'], o['City']].filter(Boolean).join(' · ') }));
+  show('<div class="card">'
+    + (fixed ? '<div class="org-name">' + esc(orgName(fixed)) + '</div>' : fCombo('Org', 'Organisation', items, { req: true, placeholder: 'Search organisations' }))
+    + fSelect('Engagement ID', 'About which product?', [], { blank: 'General, no specific product' })
+    + fDate('Date', 'Date', { req: true, value: todayStr(), max: todayStr() })
+    + fChoice('Type', 'How were you in touch?', S.lists.interactionType, { req: true })
+    + fText('Spoke With', 'Spoke with')
+    + fChoice('Logged By', 'Logged by', activeNames(), { req: true, value: S.me })
+    + fText('Summary', 'What happened?', { req: true, area: true, rows: 4 })
+    + fText('Next Step', 'Next step')
+    + fDate('Follow-up Date', 'Follow up on', { min: todayStr() }) + '</div>',
+    '<button class="btn btn-primary" id="f10save">Save</button>');
+  f10_fillEng(fixed, engId);
+  $('#view').addEventListener('combochange', ev => { if (ev.target.closest('[data-f="Org"]')) f10_fillEng(ev.detail.v, ''); });
+  $('#f10save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    const f = readForm(root), orgId = fixed || f['Org'];
+    if (f['Follow-up Date'] && f['Follow-up Date'] < f['Date']) { barError('The follow-up date cannot be earlier than the date of contact.'); return; }
+    runSave($('#f10save'), async () => {
+      const d = await api('addInteraction', { loggedBy: f['Logged By'], orgId: orgId, engagementId: f['Engagement ID'] || '', date: f['Date'], type: f['Type'], spokeWith: f['Spoke With'], summary: f['Summary'], nextStep: f['Next Step'], followUpDate: f['Follow-up Date'] }, true);
+      upsert(S.interactions, 'Interaction ID', d.interaction); reindex();
+      confirmed('Logged. Thank you.', '');
+      replace(engId ? 'eng/' + engId : 'org/' + resolveOrgId(orgId));
+    });
+  });
+};
+REG.orgSections.push({
+  order: 30,
+  html: o => {
+    const list = S.idx.intByOrg[o['Org ID']] || [];
+    const all = S.ui.showAllInt === o['Org ID'];
+    const shown = all ? list : list.slice(0, 5);
+    return '<div class="card"><div class="card-title">Interactions' + (list.length > 5 ? '<button class="link-btn" data-act="f10.toggle" data-id="' + escA(o['Org ID']) + '">' + (all ? 'Show fewer' : 'Show all ' + list.length) + '</button>' : '') + '</div>'
+      + (shown.length ? shown.map(i => intRowHtml(i)).join('') : '<div class="muted">Nothing logged yet.</div>') + '</div>';
+  }
+});
+REG.acts['f10.toggle'] = el => { S.ui.showAllInt = S.ui.showAllInt === el.dataset.id ? '' : el.dataset.id; REG.routes.org([el.dataset.id]); };
+/* ==== END F10 ================================================================ */
+
+/* ==== BEGIN F11 — Follow-ups due ============================================= */
+/* @spec F11
+ * Feature: Follow-ups due
+ * Status: New
+ * Screen: Home > Follow-ups
+ * Delta: New home tab listing open follow-ups with an owner filter and a Done button on each.
+ * Validations: Form: none; the owner filter is optional.
+ * Calculations: A follow-up is open when an interaction has a Follow-up Date and Follow-up Done is not Yes [CONFIRMED]. It is overdue when the date is before today [CONFIRMED]. The list shows overdue items first, then by date [CONFIRMED]. The owner of a follow-up is the owner of its engagement, or the person who logged it when there is no engagement [CONFIRMED]. The Owner filter starts as the person using the tool [CONFIRMED]. Done marks the follow-up as done and removes it from the list [CONFIRMED].
+ * Dependencies: Interactions; Engagements; Org Master (Orgs).
+ * @end */
+const F11 = { owner: null };
+REG.homeTabs.push({ id: 'fu', label: 'Follow-ups', order: 3, render: f11_render });
+function f11_items() {
+  return S.interactions.filter(i => i['Follow-up Date'] && !isYes(i['Follow-up Done'])).map(i => {
+    const e = i['Engagement ID'] ? S.idx.eng[i['Engagement ID']] : null;
+    return { i: i, e: e, owner: e ? e['Owner'] : i['Logged By'], org: resolveOrgId(i['Org ID']) };
+  });
+}
+function f11_render(host) {
+  if (F11.owner === null) F11.owner = S.me;
+  const owners = Array.from(new Set(activeNames().concat(f11_items().map(x => x.owner)))).sort((a, b) => a.localeCompare(b));
+  host.innerHTML = '<div class="filter-panel" style="grid-template-columns:1fr;margin-bottom:10px"><div class="field"><label class="field-label">Owner</label><select id="f11owner"><option value="">All</option>'
+    + owners.map(n => '<option' + (n === F11.owner ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div></div><div class="count-line" id="f11count"></div><div id="f11list"></div>';
+  $('#f11owner').addEventListener('change', e => { F11.owner = e.target.value; f11_list(); });
+  f11_list();
+}
+function f11_list() {
+  const rows = f11_items().filter(x => !F11.owner || x.owner === F11.owner)
+    .sort((a, b) => a.i['Follow-up Date'].localeCompare(b.i['Follow-up Date']) || orgName(a.org).localeCompare(orgName(b.org)));
+  $('#f11count').textContent = plural(rows.length, 'follow-up');
+  $('#f11list').innerHTML = rows.length ? '<div class="list">' + rows.map(x => {
+    const late = x.i['Follow-up Date'] < todayStr();
+    const due = late ? 'Overdue by ' + plural(daysBetween(x.i['Follow-up Date'], todayStr()), 'day') : 'Due ' + fmtD(x.i['Follow-up Date']);
+    return '<div class="row"><div class="row-top"><a href="#/' + (x.e ? 'eng/' + escA(x.e['Engagement ID']) : 'org/' + escA(x.org)) + '" style="flex:1;min-width:0;text-decoration:none;color:inherit">'
+      + '<div class="row-title">' + esc(orgName(x.org)) + (x.e ? ' — ' + esc(engLabel(x.e)) : '') + '</div>'
+      + '<div class="row-sub"><span class="' + (late ? 'overdue' : '') + '">' + esc(due) + '</span> · ' + esc(x.owner) + '</div>'
+      + (x.i['Next Step'] ? '<div>' + esc(x.i['Next Step']) + '</div>' : '') + '<div class="small muted">' + esc(x.i['Summary'].slice(0, 110)) + (x.i['Summary'].length > 110 ? '…' : '') + '</div></a>'
+      + '<button class="btn btn-sm" data-act="f11.done" data-id="' + escA(x.i['Interaction ID']) + '">Done</button></div></div>';
+  }).join('') + '</div>' : '<div class="empty">No follow-ups waiting.</div>';
+}
+REG.acts['f11.done'] = async el => {
+  try {
+    const d = await api('setFollowupDone', { by: S.me, interactionId: el.dataset.id, done: true }, true);
+    upsert(S.interactions, 'Interaction ID', d.interaction); reindex(); f11_list(); toast('Marked done.');
+  } catch (err) { toast(err.message); }
+};
+/* ==== END F11 ================================================================ */
+
+
+/* ==== BEGIN F12 — Manage products ============================================ */
+/* @spec F12
+ * Feature: Manage products
+ * Status: New
+ * Screen: Settings > Products
+ * Delta: New screen to add products and to rename, describe, activate or deactivate them. Products are created here and never typed into the sheet.
+ * Validations: Form: product name is required for a new product and when renaming. The server checks the name is up to 80 characters and unique ignoring case and spaces.
+ * Calculations: Product ID is issued by the server [CONFIRMED]. New products are active [CONFIRMED]. An inactive product stays on old engagements but cannot be chosen for new ones [CONFIRMED].
+ * Dependencies: Products; F07 (only active products are offered).
+ * @end */
+REG.settingsItems.push({ group: 'Master data and reference', order: 1, label: 'Products', route: 'products' });
+REG.routes.products = function () {
+  page('Products');
+  const rows = S.products.slice().sort((a, b) => a['Product Name'].localeCompare(b['Product Name']));
+  show('<div class="card" id="f12add"><div class="card-title">New product</div>' + fText('Product Name', 'Name', { req: true }) + fText('Description', 'Description') + '</div>'
+    + rows.map(p => '<div class="card" data-pid="' + escA(p['Product ID']) + '"><div class="card-title"><span>' + esc(p['Product ID']) + '</span></div>'
+      + fText('Product Name', 'Name', { req: true, value: p['Product Name'] }) + fText('Description', 'Description', { value: p['Description'] })
+      + fChips('Active', 'Active', ['Yes', 'No'], { req: true, value: isYes(p['Active']) ? 'Yes' : 'No' })
+      + '<div style="margin-top:12px"><button class="btn btn-sm" data-act="f12.save" data-id="' + escA(p['Product ID']) + '">Save</button></div></div>').join(''),
+    '<button class="btn btn-primary" id="f12new">Add product</button>');
+  $('#f12new').addEventListener('click', () => {
+    const root = $('#f12add'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f12new'), async () => {
+      const f = readForm(root);
+      const d = await api('addProduct', { by: S.me, name: f['Product Name'], description: f['Description'] }, true);
+      upsert(S.products, 'Product ID', d.product); reindex();
+      confirmed('Added.', d.product['Product Name'] + ' is ready to use.');
+      REG.routes.products();
+    });
+  });
+};
+REG.acts['f12.save'] = async el => {
+  const card = el.closest('[data-pid]'); const miss = validateForm(card);
+  if (miss) { toast(miss); return; }
+  const f = readForm(card);
+  try {
+    const d = await api('updateProduct', { by: S.me, productId: card.dataset.pid, name: f['Product Name'], description: f['Description'], active: f['Active'] }, true);
+    upsert(S.products, 'Product ID', d.product); reindex(); toast('Saved.');
+  } catch (err) { toast(err.message); }
+};
+/* ==== END F12 ================================================================ */
+
+/* ==== BEGIN F13 — Hand over engagements (bulk reassign) ====================== */
+/* @spec F13
+ * Feature: Hand over engagements
+ * Status: New
+ * Screen: Settings > Hand over engagements
+ * Delta: New screen to move engagements from one owner to another in one save.
+ * Validations: Form: a new owner and at least one ticked engagement are required. The new owner is chosen from active members other than the current owner. The server repeats the checks.
+ * Calculations: The list shows every engagement owned by the chosen person; New and In progress engagements are ticked by default and Converted and Not interested are not [CONFIRMED]. Only Owner changes; stages and dates are untouched [CONFIRMED].
+ * Dependencies: Engagements; Members.
+ * @end */
+REG.settingsItems.push({ group: 'Team', order: 1, label: 'Hand over engagements', route: 'reassign' });
+const F13 = { from: '' };
+REG.routes.reassign = function () {
+  page('Hand over engagements');
+  const owners = Array.from(new Set(S.engagements.map(e => e['Owner']))).sort((a, b) => a.localeCompare(b));
+  if (!owners.length) { show('<div class="empty">There are no engagements yet.</div>'); return; }
+  if (owners.indexOf(F13.from) < 0) F13.from = owners.indexOf(S.me) >= 0 ? S.me : owners[0];
+  const list = S.engagements.filter(e => e['Owner'] === F13.from).sort((a, b) => (f08_order(a) - f08_order(b)) || orgName(resolveOrgId(a['Org ID'])).localeCompare(orgName(resolveOrgId(b['Org ID']))));
+  const to = activeNames().filter(n => n !== F13.from);
+  show('<div class="card"><div class="field"><label class="field-label">From</label><select id="f13from">'
+    + owners.map(n => '<option value="' + escA(n) + '"' + (n === F13.from ? ' selected' : '') + '>' + esc(n) + ' (' + S.engagements.filter(e => e['Owner'] === n).length + ')</option>').join('') + '</select></div>'
+    + fChoice('To', 'To', to, { req: true }) + '</div>'
+    + '<div class="card" id="f13list"><div class="card-title">Engagements</div>' + list.map(e => '<label class="check-row"><input type="checkbox" value="' + escA(e['Engagement ID']) + '"' + (STAGE_OPEN.indexOf(e['Stage']) >= 0 ? ' checked' : '') + '>'
+      + '<div class="grow"><div class="row-title">' + esc(orgName(resolveOrgId(e['Org ID']))) + '</div><div class="row-sub">' + esc(engLabel(e)) + '</div></div>' + stageBadge(e['Stage']) + '</label>').join('') + '</div>',
+    '<button class="btn btn-primary" id="f13save">Hand over</button>');
+  $('#f13from').addEventListener('change', e => { F13.from = e.target.value; REG.routes.reassign(); });
+  $('#f13save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    const ids = $$('#f13list input:checked').map(i => i.value);
+    if (miss) { barError(miss); return; }
+    if (!ids.length) { barError('Please tick at least one engagement.'); return; }
+    runSave($('#f13save'), async () => {
+      const target = readForm(root)['To'];
+      const d = await api('bulkReassign', { by: S.me, from: F13.from, to: target, engagementIds: ids }, true);
+      d.engagements.forEach(e => upsert(S.engagements, 'Engagement ID', e)); reindex();
+      confirmed('Handed over.', plural(ids.length, 'engagement') + ' now with ' + target + '.');
+      REG.routes.reassign();
+    });
+  });
+};
+/* ==== END F13 ================================================================ */
+
+/* ==== BEGIN F14 — Import organisations ======================================= */
+/* @spec F14
+ * Feature: Import organisations
+ * Status: New
+ * Screen: Settings > Import organisations
+ * Delta: New screen that checks organisations pasted into the Import tab of the team sheet and loads them into the Org Master. Organisations only; engagements and interactions are not imported.
+ * Validations: Form: nothing can be loaded until the check has run. Rows with errors cannot be loaded. The server repeats the checks on each row when loading.
+ * Calculations: Each row is shown as ready, possible duplicate or error [CONFIRMED]. Ready rows are loaded; each possible duplicate is skipped unless the user chooses Load anyway [CONFIRMED]. The Load button counts ready rows plus duplicates set to load [CONFIRMED]. Loaded rows get a Result in the Import tab and are not offered again [CONFIRMED]. After loading, the tool reloads its data [CONFIRMED].
+ * Dependencies: Import tab (team sheet); Org Master (Orgs, Lists, Config); Members; F01 (data reload).
+ * @end */
+REG.settingsItems.push({ group: 'Master data and reference', order: 2, label: 'Import organisations', route: 'import' });
+const F14 = { prev: null };
+REG.routes.import = function () {
+  page('Import organisations');
+  F14.prev = null;
+  show('<div class="card"><p style="margin-top:0">Paste organisations into the Import tab of this sheet, then check them here.</p><button class="btn btn-primary" id="f14check">Check the Import tab</button></div><div id="f14out"></div>', '');
+  $('#f14check').addEventListener('click', async e => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = 'Checking…';
+    try { F14.prev = await api('importPreview'); f14_show(); }
+    catch (err) { $('#f14out').innerHTML = '<div class="banner">' + esc(err.message) + '</div>'; }
+    finally { btn.disabled = false; btn.textContent = 'Check the Import tab'; }
+  });
+};
+function f14_selection() {
+  const load = [], skip = [];
+  F14.prev.rows.forEach(r => {
+    if (r.status === 'ready') load.push(r.row);
+    else if (r.status === 'duplicate') { const c = $('.chips[data-row="' + r.row + '"] .chip.selected'); (c && c.dataset.v === 'load' ? load : skip).push(r.row); }
+  });
+  return { load: load, skip: skip };
+}
+function f14_sync() {
+  const s = f14_selection(); const b = $('#f14load');
+  if (b) { b.textContent = 'Load ' + plural(s.load.length, 'organisation'); b.disabled = !s.load.length; }
+}
+function f14_show() {
+  const p = F14.prev, c = p.counts;
+  if (!p.rows.length) { $('#f14out').innerHTML = '<div class="empty">Nothing is waiting in the Import tab.</div>'; setBar(''); return; }
+  $('#f14out').innerHTML = '<div class="badges" style="margin-bottom:12px"><span class="badge st-conv">' + c.ready + ' ready</span><span class="badge st-new">' + c.duplicate + ' possible duplicate</span><span class="badge cold">' + c.error + ' with errors</span></div>'
+    + '<div class="list">' + p.rows.map(r => '<div class="row"><div class="row-top"><div style="min-width:0"><div class="row-title">' + esc(r.name || '(no name)') + '</div><div class="row-sub">Row ' + r.row + ' · ' + esc([r.type, r.city].filter(Boolean).join(' · ')) + '</div>'
+      + (r.message ? '<div class="small ' + (r.status === 'error' ? 'overdue' : 'muted') + '">' + esc(r.message) + '</div>' : '') + '</div>'
+      + (r.status === 'ready' ? '<span class="badge st-conv">Ready</span>' : r.status === 'error' ? '<span class="badge cold">Error</span>' : '<span class="badge st-new">Duplicate?</span>') + '</div>'
+      + (r.status === 'duplicate' ? '<div class="chips" data-row="' + r.row + '" style="margin-top:8px"><div class="chip selected" data-v="skip">Skip</div><div class="chip" data-v="load">Load anyway</div></div>' : '') + '</div>').join('') + '</div>';
+  setBar('<button class="btn btn-primary" id="f14load">Load</button>');
+  f14_sync();
+  $('#f14out').addEventListener('chipchange', f14_sync);
+  $('#f14load').addEventListener('click', () => {
+    const s = f14_selection();
+    runSave($('#f14load'), async () => {
+      const d = await api('importLoad', { by: S.me, load: s.load, skip: s.skip }, true);
+      await refreshData();
+      confirmed('Loaded.', plural(d.loaded.length, 'organisation') + ' added.');
+      setBar('');
+      $('#f14out').innerHTML = '<div class="card"><div class="card-title">Done</div><p style="margin-top:0">' + plural(d.loaded.length, 'organisation') + ' added'
+        + (d.skipped ? ', ' + d.skipped + ' skipped' : '') + (d.failed.length ? ', ' + d.failed.length + ' could not be loaded' : '') + '.</p>'
+        + (d.failed.length ? d.failed.map(f => '<div class="small overdue">Row ' + f.row + ': ' + esc(f.message) + '</div>').join('') : '')
+        + '<a class="btn btn-primary" href="#/home" style="margin-top:12px">See the list</a></div>';
+    });
+  });
+}
+/* ==== END F14 ================================================================ */
+
+/* ==== Feature Spec view (generated from the spec tags at build time) ========= */
+const FEATURE_SPEC = [
+ {
+  "feature": "Connect, identify and brand",
+  "status": "New",
+  "screen": "First open; Settings > This device",
+  "delta": "New start-up flow: the web app address (from the landing page link ?url=, or typed once), the team key, and the person using the tool. All three are remembered on the device. The page title, heading and main colour come from Config.",
+  "validations": "Form: the web app address must answer; the team key is required and is checked by the server on every request; the person must be chosen from active members.",
+  "calculations": "Remembered values are kept per web app address, so two workspaces opened from the same page do not mix [CONFIRMED]. Heading is Tool Title (default Relationships), the subtitle is Workspace Name, and the colour is Primary Colour with darker and softer shades worked out from it [CONFIRMED]. Today's date comes from the server in the Config timezone [CONFIRMED].",
+  "dependencies": "Config (Team): Team Key, Workspace Name, Tool Title, Primary Colour, Timezone; Members.",
+  "id": "F01"
+ },
+ {
+  "feature": "Organisation search and filter",
+  "status": "New",
+  "screen": "Home > Organisations",
+  "delta": "New home tab. Search box, a Filters panel (type, city, tag, owner, stage) and a list of active organisations.",
+  "validations": "Form: none; every filter is optional.",
+  "calculations": "Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Owner and Stage filters match organisations that have at least one engagement of this team meeting both [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the team's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].",
+  "dependencies": "Org Master (Orgs); Engagements; Products; F03 (row opens the organisation page).",
+  "id": "F02"
+ },
+ {
+  "feature": "Organisation briefing page",
+  "status": "New",
+  "screen": "Organisation page (opened from any list)",
+  "delta": "New screen: name, type, place, website, tags, last contact, contacts, about, the team's engagements and recent interactions, and who created and last updated the record.",
+  "validations": "Form: none (read-only page).",
+  "calculations": "Last contact is the latest interaction Date among this team's interactions with the organisation [CONFIRMED]. Opening an archived organisation shows the organisation named in Archived To instead [CONFIRMED]. Engagements and interactions recorded against an archived Org ID appear on the replacement organisation [CONFIRMED]. Phone numbers and email addresses in Contacts become tappable links [CONFIRMED]. Created by and Last updated by show Name (Workspace Name) so another team can see whom to ask [CONFIRMED].",
+  "dependencies": "Org Master (Orgs); Engagements; Interactions; sections added by F08 and F10; actions added by F05, F06, F07 and F10.",
+  "id": "F03"
+ },
+ {
+  "feature": "Add organisation",
+  "status": "New",
+  "screen": "Home > Add > Organisation",
+  "delta": "New form and a duplicate warning. Entry point is registered in the Add menu; the form can be opened from an empty search with the typed name filled in.",
+  "validations": "Form: Organisation name and Type are required; the page scrolls to the first missing field and nothing is saved. Website is accepted with or without https://. The server repeats every check. Server: Server checks: Org Name is required, up to 120 characters. Org Type is required and must be in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address; https:// is added when missing. Added by must be an active member.",
+  "calculations": "Before saving, existing records with the same name (ignoring case and spaces) or the same website domain are listed with Open and Add anyway [CONFIRMED]. Org ID, stamps and the counter are set by the server on save [CONFIRMED]. After saving, the new organisation page opens [CONFIRMED]. Server: Org ID is the highest existing number in the Org Master plus 1 (and never lower than Config > Next Org Number), written as ORG- plus 4 digits, under a script lock [CONFIRMED]. After the row is written the script checks the ID appears once and issues a new one if another team's script created the same ID at the same moment [CONFIRMED]. Next Org Number is then set to the highest ID plus 1 [CONFIRMED]. Duplicate check: an existing record, Active or Archived, with the same name ignoring case and spaces, or the same website domain ignoring www, is returned as a warning and the record is not saved until the user confirms [CONFIRMED]. Created On/By and Last Updated On/By are set on save as Name (Workspace Name) [CONFIRMED].",
+  "dependencies": "Org Master (Orgs, Lists); Members; shared form helper orgFormHtml. Server: Org Master (Orgs, Lists, Config); Config (Team): Workspace Name, Master Sheet ID; Members.",
+  "id": "F04"
+ },
+ {
+  "feature": "Edit organisation",
+  "status": "New",
+  "screen": "Organisation page > Edit details",
+  "delta": "New form, the same fields as Add organisation, filled with the saved values. Includes the Contacts and About text.",
+  "validations": "Form: Organisation name and Type are required. The server repeats every check and refuses archived records. Server: Server checks: same field rules as Add organisation. Org ID cannot be changed. An archived organisation cannot be edited. Saved by must be an active member.",
+  "calculations": "Last Updated On and By are set by the server on every save [CONFIRMED]. Created On and By are not changed [CONFIRMED]. After saving, the organisation page opens [CONFIRMED]. Server: Last Updated On/By are set on every save, as Name (Workspace Name) [CONFIRMED]. Created On/By are never changed [CONFIRMED].",
+  "dependencies": "Org Master (Orgs, Lists); Members; shared form helper orgFormHtml. Server: Org Master (Orgs, Lists); Members; Config (Team): Workspace Name.",
+  "id": "F05"
+ },
+ {
+  "feature": "Mark organisation as duplicate",
+  "status": "New",
+  "screen": "Organisation page > Mark as duplicate",
+  "delta": "New screen to pick the record that replaces this one. Records are archived, never deleted or merged.",
+  "validations": "Form: the replacement is required and is chosen from active organisations other than this one. The server repeats the checks. Server: Server checks: the replacement organisation must exist, be Active, and be a different record. An organisation that is already archived cannot be archived again. Saved by must be an active member.",
+  "calculations": "After saving, the old record is hidden from search and lists and opening it shows the replacement; its engagements and interactions appear on the replacement [CONFIRMED]. Server: Record Status becomes Archived and Archived To holds the replacement Org ID; the record stays in the sheet and Last Updated On/By are set [CONFIRMED]. Org IDs stored on engagements and interactions are not rewritten; they are resolved through Archived To when read [CONFIRMED].",
+  "dependencies": "Org Master (Orgs); F03 (redirect and combined history). Server: Org Master (Orgs); Members.",
+  "id": "F06"
+ },
+ {
+  "feature": "Add engagements",
+  "status": "New",
+  "screen": "Organisation page > Add engagement",
+  "delta": "New form. Several products can be ticked in one save, which creates one engagement per product. Products that already have an engagement with this organisation are shown crossed out and cannot be ticked.",
+  "validations": "Form: at least one product, an owner and a start date are required. Only active products are offered. Key contact, expectations and the document link are optional. The server repeats every check, including one engagement per organisation and product. Server: Server checks: the organisation must exist (an archived one is replaced by its Archived To record). At least one product must be chosen; each must exist and be Active. A product that already has an engagement with this organisation is rejected. Owner must be an active member. Start Date must be a valid date. Document Link, if given, must be a web address.",
+  "calculations": "Stage starts as New [CONFIRMED]. The owner defaults to the person using the tool [CONFIRMED]. Start date defaults to today [CONFIRMED]. After saving, the organisation page opens [CONFIRMED]. Server: One engagement is created per chosen product, all with the same owner, key contact, expectations, start date and document link [CONFIRMED]. Engagement ID is the highest existing number plus 1, written as ENG- plus 4 digits, under a script lock [CONFIRMED]. Stage starts as New; Stage Changed On is set to today [CONFIRMED]. Created On/By are set on save [CONFIRMED].",
+  "dependencies": "Products; Members; Engagements; F12 (products must exist). Server: Products; Members; Org Master (Orgs); Lists (Team): Stage.",
+  "id": "F07"
+ },
+ {
+  "feature": "Engagement page and update",
+  "status": "New",
+  "screen": "Organisation page > Engagements; Engagement page; Engagement page > Edit",
+  "delta": "New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page.",
+  "validations": "Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the stage is Not interested. The server repeats every check. Server: Server checks: Stage must be in Lists (Team) > Stage. A changed Owner must be an active member. Start Date and Revisit On must be valid dates, and Revisit On cannot be earlier than Start Date. Document Link, if given, must be a web address. Org ID and Product ID cannot be changed. Saved by must be an active member.",
+  "calculations": "Tapping a stage saves it at once and sets Stage Changed On to today; tapping Not interested opens the edit form so the reason can be added [CONFIRMED]. Last contact is the latest interaction Date for the engagement [CONFIRMED]. An engagement is flagged Going cold when its stage is New or In progress and the days since its last interaction (or its start date if there is none) exceed Stale After Days [CONFIRMED]. Converted and Not interested engagements are never flagged [CONFIRMED]. Engagements on the organisation page are ordered New and In progress first, then Converted, then Not interested, newest start first [CONFIRMED]. Server: Stage Changed On is set to today whenever Stage changes [CONFIRMED]. Not Interested Reason and Revisit On are kept as saved when the stage later changes; they are not cleared automatically [CONFIRMED].",
+  "dependencies": "Engagements; Products; Interactions; Lists (Team): Stage; Config: Stale After Days; Members. Server: Engagements; Lists (Team): Stage; Members.",
+  "id": "F08"
+ },
+ {
+  "feature": "Engagements work list",
+  "status": "New",
+  "screen": "Home > Engagements",
+  "delta": "New home tab listing the team's engagements with owner and stage filters and a Going cold flag.",
+  "validations": "Form: none; both filters are optional.",
+  "calculations": "The Owner filter starts as the person using the tool and can be set to All or another person [CONFIRMED]. The Stage filter starts as Open (New and In progress) and can be set to All or a single stage [CONFIRMED]. Going cold rows are listed first, then the longest since last contact first [CONFIRMED]. Each row shows the days since the last contact, or No contact yet [CONFIRMED].",
+  "dependencies": "Engagements; Interactions; Products; Config: Stale After Days; F08 (row opens the engagement page).",
+  "id": "F09"
+ },
+ {
+  "feature": "Log interaction",
+  "status": "New",
+  "screen": "Home > Add > Log interaction; Organisation page > Log interaction; Engagement page > Log interaction",
+  "delta": "New form and a new Interactions list on the organisation page (latest five, with Show all). An interaction belongs to the organisation, with the engagement optional.",
+  "validations": "Form: organisation (when not already chosen), date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The engagement choice lists only this organisation's engagements. The server repeats every check. Server: Server checks: the organisation must exist (archived resolves to its replacement). If an engagement is given it must belong to the same organisation. Date is required, a valid date and not later than today. Type must be in Lists (Team) > Interaction Type. Logged By must be an active member. Summary is required. Follow-up Date, if given, is a valid date and not earlier than Date.",
+  "calculations": "Date defaults to today and Logged by to the person using the tool [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. After saving, the engagement page opens when the form was started from an engagement, otherwise the organisation page [CONFIRMED]. Server: Interaction ID is the highest existing number plus 1, written as INT- plus 4 digits, under a script lock [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. Created On is set on save [CONFIRMED].",
+  "dependencies": "Interactions; Engagements; Org Master (Orgs); Lists (Team): Interaction Type; Members.",
+  "id": "F10"
+ },
+ {
+  "feature": "Follow-ups due",
+  "status": "New",
+  "screen": "Home > Follow-ups",
+  "delta": "New home tab listing open follow-ups with an owner filter and a Done button on each.",
+  "validations": "Form: none; the owner filter is optional. Server: Server checks: the interaction must exist and must have a Follow-up Date. Saved by must be an active member.",
+  "calculations": "A follow-up is open when an interaction has a Follow-up Date and Follow-up Done is not Yes [CONFIRMED]. It is overdue when the date is before today [CONFIRMED]. The list shows overdue items first, then by date [CONFIRMED]. The owner of a follow-up is the owner of its engagement, or the person who logged it when there is no engagement [CONFIRMED]. The Owner filter starts as the person using the tool [CONFIRMED]. Done marks the follow-up as done and removes it from the list [CONFIRMED]. Server: Marking done sets Follow-up Done to Yes; un-marking clears it [CONFIRMED].",
+  "dependencies": "Interactions; Engagements; Org Master (Orgs). Server: Interactions.",
+  "id": "F11"
+ },
+ {
+  "feature": "Manage products",
+  "status": "New",
+  "screen": "Settings > Products",
+  "delta": "New screen to add products and to rename, describe, activate or deactivate them. Products are created here and never typed into the sheet.",
+  "validations": "Form: product name is required for a new product and when renaming. The server checks the name is up to 80 characters and unique ignoring case and spaces. Server: Server checks: Product Name is required, up to 80 characters, and unique ignoring case and spaces. Active must be Yes or No. Saved by must be an active member.",
+  "calculations": "Product ID is issued by the server [CONFIRMED]. New products are active [CONFIRMED]. An inactive product stays on old engagements but cannot be chosen for new ones [CONFIRMED]. Server: Product ID is the highest existing number plus 1, written as PRD- plus 3 digits, under a script lock [CONFIRMED]. New products are Active = Yes [CONFIRMED]. Making a product inactive keeps it on old engagements but removes it from the choice for new ones [CONFIRMED].",
+  "dependencies": "Products; F07 (only active products are offered). Server: Products; Engagements.",
+  "id": "F12"
+ },
+ {
+  "feature": "Hand over engagements",
+  "status": "New",
+  "screen": "Settings > Hand over engagements",
+  "delta": "New screen to move engagements from one owner to another in one save.",
+  "validations": "Form: a new owner and at least one ticked engagement are required. The new owner is chosen from active members other than the current owner. The server repeats the checks. Server: Server checks: at least one engagement must be chosen. The new owner must be an active member and different from the current owner. Every chosen engagement must currently be owned by the person named as the current owner. Saved by must be an active member.",
+  "calculations": "The list shows every engagement owned by the chosen person; New and In progress engagements are ticked by default and Converted and Not interested are not [CONFIRMED]. Only Owner changes; stages and dates are untouched [CONFIRMED]. Server: Owner is changed on every chosen engagement in one save; other fields and Stage Changed On are not touched [CONFIRMED]. Which engagements are chosen is decided on the screen: New and In progress engagements of the selected person are ticked by default, Converted and Not interested are unticked [CONFIRMED].",
+  "dependencies": "Engagements; Members.",
+  "id": "F13"
+ },
+ {
+  "feature": "Import organisations",
+  "status": "New",
+  "screen": "Settings > Import organisations",
+  "delta": "New screen that checks organisations pasted into the Import tab of the team sheet and loads them into the Org Master. Organisations only; engagements and interactions are not imported.",
+  "validations": "Form: nothing can be loaded until the check has run. Rows with errors cannot be loaded. The server repeats the checks on each row when loading. Server: Server checks: each pasted row needs an Org Name (up to 120 characters) and an Org Type that is in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address. Rows that already show a Result are ignored. Loaded by must be an active member. A row that fails these checks is shown as an error and cannot be loaded.",
+  "calculations": "Each row is shown as ready, possible duplicate or error [CONFIRMED]. Ready rows are loaded; each possible duplicate is skipped unless the user chooses Load anyway [CONFIRMED]. The Load button counts ready rows plus duplicates set to load [CONFIRMED]. Loaded rows get a Result in the Import tab and are not offered again [CONFIRMED]. After loading, the tool reloads its data [CONFIRMED]. Server: A pasted row is marked possible duplicate when its name (ignoring case and spaces) or website domain matches an existing record, Active or Archived, or an earlier row in the same Import tab [CONFIRMED]. Rows marked ready are loaded; possible duplicates are loaded only if the user chooses to [CONFIRMED]. Org IDs are issued in sheet order as in Add organisation [CONFIRMED]. After loading, the Import tab's Result column shows Loaded as ORG-xxxx, or Skipped for duplicates the user skipped [CONFIRMED].",
+  "dependencies": "Import tab (team sheet); Org Master (Orgs, Lists, Config); Members; F01 (data reload). Server: Import tab (team sheet); Org Master (Orgs, Lists, Config); Members.",
+  "id": "F14"
+ }
+];
+REG.settingsItems.push({ group: 'Master data and reference', order: 3, label: 'Feature Spec', route: 'spec' });
+REG.routes.spec = function () {
+  page('Feature Spec');
+  document.body.classList.add('spec-view');
+  const mark = s => esc(s).replace(/\[CONFIRMED[^\]]*\]/g, m => '<span class="badge st-conv">' + m.slice(1, -1) + '</span>').replace(/\[UNVERIFIED[^\]]*\]/g, m => '<span class="badge cold">' + m.slice(1, -1) + '</span>');
+  show('<div class="spec-wrap"><table class="spec"><thead><tr><th>Sr No</th><th>Feature</th><th>New / Modified</th><th>Screen / Location</th><th>Delta</th><th>Validations</th><th>Calculations</th><th>Dependencies</th></tr></thead><tbody>'
+    + FEATURE_SPEC.map((f, i) => '<tr><td>' + (i + 1) + '</td><td><b>' + esc(f.feature) + '</b></td><td>' + esc(f.status) + '</td><td>' + esc(f.screen) + '</td><td>' + esc(f.delta) + '</td><td>' + esc(f.validations) + '</td><td>' + mark(f.calculations) + '</td><td>' + esc(f.dependencies) + '</td></tr>').join('')
+    + '</tbody></table></div>');
+};
+
+/* ==== BEGIN F01 — Connect, identify and brand ================================ */
+/* @spec F01
+ * Feature: Connect, identify and brand
+ * Status: New
+ * Screen: First open; Settings > This device
+ * Delta: New start-up flow: the web app address (from the landing page link ?url=, or typed once), the team key, and the person using the tool. All three are remembered on the device. The page title, heading and main colour come from Config.
+ * Validations: Form: the web app address must answer; the team key is required and is checked by the server on every request; the person must be chosen from active members.
+ * Calculations: Remembered values are kept per web app address, so two workspaces opened from the same page do not mix [CONFIRMED]. Heading is Tool Title (default Relationships), the subtitle is Workspace Name, and the colour is Primary Colour with darker and softer shades worked out from it [CONFIRMED]. Today's date comes from the server in the Config timezone [CONFIRMED].
+ * Dependencies: Config (Team): Team Key, Workspace Name, Tool Title, Primary Colour, Timezone; Members.
+ * @end */
+function applyData(d) {
+  S.cfg = d.config; S.members = d.members; S.lists = d.lists; S.products = d.products;
+  S.engagements = d.engagements; S.interactions = d.interactions; S.orgs = d.orgs;
+  applyBrand(); reindex();
+}
+async function refreshData() { applyData(await api('getAll')); }
+function viewShell() { setChrome({ title: brandTitle(), sub: S.cfg.workspaceName || '', back: false }); setBar(''); }
+function viewConnect(msg) {
+  viewShell();
+  show((msg ? '<div class="banner">' + esc(msg) + '</div>' : '') + '<div class="card">' + fText('url', 'Web app address', { req: true, type: 'url', placeholder: 'https://script.google.com/…' }) + '</div>', '<button class="btn btn-primary" id="f01go">Connect</button>');
+  $('#f01go').addEventListener('click', () => {
+    const miss = validateForm($('#view')); if (miss) { barError(miss); return; }
+    const url = readForm($('#view'))['url'];
+    runSave($('#f01go'), async () => {
+      let ok = false;
+      try { const r = await fetch(url + (url.indexOf('?') >= 0 ? '&' : '?') + 'action=ping'); ok = (await r.json()).ok; } catch (e) { ok = false; }
+      if (!ok) throw new Error('That address did not answer. Please check it and try again.');
+      useUrl(url); begin();
+    });
+  });
+}
+function viewKey(msg) {
+  viewShell();
+  show((msg ? '<div class="banner">' + esc(msg) + '</div>' : '') + '<div class="card">' + fText('key', 'Team key', { req: true }) + '</div>', '<button class="btn btn-primary" id="f01go">Open</button>');
+  const go1 = () => { const miss = validateForm($('#view')); if (miss) { barError(miss); return; } S.key = readForm($('#view'))['key']; store.set('key', S.key); startData(); };
+  $('#f01go').addEventListener('click', go1);
+}
+function viewWho(canCancel) {
+  viewShell();
+  show('<div class="card">' + fChoice('who', 'Who is using this?', activeNames(), { req: true, value: S.me }) + '</div>' + (canCancel ? '<div class="center"><button class="link-btn" data-act="f01.cancelwho">Cancel</button></div>' : ''),
+    '<button class="btn btn-primary" id="f01go">Continue</button>');
+  $('#f01go').addEventListener('click', () => {
+    const miss = validateForm($('#view')); if (miss) { barError(miss); return; }
+    S.me = readForm($('#view'))['who']; store.set('me', S.me); startRouting();
+  });
+}
+function viewError(msg) {
+  viewShell();
+  show('<div class="empty">' + esc(msg) + '<br><button class="btn btn-primary" id="f01retry">Try again</button><br><button class="link-btn" id="f01change">Change web app address</button></div>');
+  $('#f01retry').addEventListener('click', startData);
+  $('#f01change').addEventListener('click', () => viewConnect());
+}
+async function startData() {
+  viewShell(); show('<div class="loading-note">Loading…</div>');
+  try { await refreshData(); }
+  catch (e) {
+    if (/team key/i.test(e.message)) { store.del('key'); S.key = ''; viewKey(e.message); return; }
+    viewError(e.message); return;
+  }
+  const me = store.get('me');
+  if (me && activeNames().indexOf(me) >= 0) { S.me = me; startRouting(); } else { S.me = ''; viewWho(false); }
+}
+let routingOn = false;
+function startRouting() {
+  if (!routingOn) { window.addEventListener('hashchange', onHash); routingOn = true; }
+  if (!location.hash) history.replaceState(null, '', location.pathname + location.search + '#/home');
+  navStack.length = 0; navStack.push(location.hash);
+  route();
+}
+function useUrl(url) {
+  NS = 'crm.'; store.set('lastUrl', url);
+  S.url = url; NS = 'crm.' + hashStr(url) + '.';
+}
+function begin() {
+  S.key = store.get('key') || '';
+  if (!S.key) { viewKey(); return; }
+  startData();
+}
+REG.acts['core.who'] = () => viewWho(true);
+REG.acts['f01.cancelwho'] = () => startRouting();
+REG.acts['core.reload'] = async () => { toast('Reloading…'); try { await refreshData(); route(); toast('Up to date.'); } catch (e) { toast(e.message); } };
+REG.acts['core.forget'] = () => { store.del('key'); store.del('me'); S.key = ''; S.me = ''; viewKey(); };
+function start() {
+  const p = new URLSearchParams(location.search);
+  NS = 'crm.';
+  const url = p.get('url') || store.get('lastUrl') || '';
+  if (!url) { viewConnect(); return; }
+  useUrl(url); begin();
+}
+/* ==== END F01 ================================================================ */
+
+start();
+
+</script>
+</body>
+</html>
