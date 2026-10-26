@@ -48,6 +48,9 @@
     font-size: 28px; line-height: 1; color: var(--primary); cursor: pointer; flex-shrink: 0;
   }
   .icon-btn:active { background: var(--primary-soft); }
+  .icon-btn.refresh { font-size: 24px; }
+  .icon-btn.spin { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .hdr-title { flex: 1; min-width: 0; padding-left: 4px; }
   .hdr-title .title { font-size: 16px; font-weight: 700; color: var(--primary-dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hdr-title .subtitle { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -149,15 +152,17 @@
   .int { padding: 12px 0; border-bottom: 1px solid var(--border); }
   .int:last-child { border-bottom: none; padding-bottom: 0; }
   .int:first-child { padding-top: 0; }
-  .int-top { font-size: 13px; color: var(--text-muted); }
+  .int-top { font-size: 13px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .int-top b { color: var(--text); }
+  .int-edit { margin: -12px -4px -12px 0; flex-shrink: 0; font-size: 14px; }
   .int-sum { margin-top: 3px; white-space: pre-wrap; }
-  .int-next { margin-top: 4px; font-size: 14px; }
+  .int-next { margin-top: 4px; font-size: 14px; white-space: pre-wrap; }
   .overdue { color: var(--risk); font-weight: 600; }
   .meta { font-size: 13px; color: var(--text-muted); }
   .meta-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; }
   .banner { background: var(--risk-soft); border: 1px solid #E9C9C5; border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px; font-size: 14px; }
   .banner.soft { background: var(--primary-soft); border-color: var(--border); }
+  .banner ul { margin: 6px 0 0; padding-left: 18px; }
 
   /* ============ FORMS ============ */
   .field { margin-bottom: 18px; }
@@ -225,7 +230,7 @@
   table.spec td { vertical-align: top; padding: 10px; border-top: 1px solid var(--border); }
   .spec-view main, body.spec-view main { max-width: none; }
 
-  @media (prefers-reduced-motion: reduce) { .confirm-check circle, .confirm-check path { animation: none; stroke-dashoffset: 0; } }
+  @media (prefers-reduced-motion: reduce) { .confirm-check circle, .confirm-check path { animation: none; stroke-dashoffset: 0; } .icon-btn.spin { animation: none; } }
 </style>
 </head>
 <body>
@@ -249,23 +254,24 @@
 <script>
 'use strict';
 /* ====================================================================
-   CRM front end — generic relationship tool (one HTML file)
+   CRM front end — generic relationship tool (one HTML file), v2
 
    Structure:
      CORE            state, API, data index, router, UI and form helpers
-     FEATURE BLOCKS  F02 … F14, each between BEGIN/END markers and headed by
+     FEATURE BLOCKS  F02 … F17, each between BEGIN/END markers and headed by
                      a spec tag. A feature registers itself into REG (routes,
                      home tabs, menus, org-page sections); deleting its block
                      removes the feature and leaves the rest working.
      F01             connect / identify / start-up (last, because it runs)
    The Feature Spec view is generated from the spec tags at build time.
+   F12 (Manage products) was removed in v2 and its number is not reused.
    ==================================================================== */
 
 const S = {
-  url: '', key: '', me: '', cfg: {}, members: [], products: [], engagements: [], interactions: [], orgs: [],
+  url: '', key: '', me: '', cfg: {}, members: [], products: [], productWarnings: [], engagements: [], interactions: [], orgs: [],
   lists: { stage: [], interactionType: [], orgType: [], source: [] }, idx: {}, ui: {}
 };
-const REG = { routes: {}, homeTabs: [], addMenu: [], orgSections: [], orgActions: [], settingsItems: [], acts: {} };
+const REG = { routes: {}, homeTabs: [], homeBanners: [], addMenu: [], orgSections: [], orgActions: [], settingsItems: [], acts: {} };
 const STAGE_OPEN = ['New', 'In progress'];
 const STAGE_NI = 'Not interested';
 function activeOrgs() { return S.orgs.filter(o => o['Record Status'] !== 'Archived'); }
@@ -393,7 +399,9 @@ function setBar(html) {
   b.innerHTML = '<div class="bar-error" id="barError"></div><div class="bar-inner">' + html + '</div>';
 }
 function show(html, bar) { $('#view').innerHTML = html; setBar(bar); }
-function page(title, back) { document.body.classList.remove('spec-view'); setChrome({ title: title, sub: '', back: back !== false }); }
+function page(title, back, actions) { document.body.classList.remove('spec-view'); setChrome({ title: title, sub: '', back: back !== false, actions: actions || '' }); }
+// The header refresh button appears only while the Refresh feature (F17) is present.
+function refreshBtn() { return REG.acts['f17.refresh'] ? '<button class="icon-btn refresh" data-act="f17.refresh" aria-label="Refresh" title="Refresh">&#8635;</button>' : ''; }
 
 const navStack = [];
 let replacing = false;
@@ -559,8 +567,9 @@ function intRowHtml(i, o) {
   const eng = i['Engagement ID'] ? S.idx.eng[i['Engagement ID']] : null;
   const fu = i['Follow-up Date'] && !isYes(i['Follow-up Done'])
     ? ' <span class="' + (i['Follow-up Date'] < todayStr() ? 'overdue' : '') + '">Follow up ' + esc(fmtD(i['Follow-up Date'])) + '</span>' : '';
-  return '<div class="int"><div class="int-top"><b>' + esc(fmtD(i['Date'])) + '</b> · ' + esc(i['Type']) + ' · ' + esc(i['Logged By'])
+  return '<div class="int"><div class="int-top"><div><b>' + esc(fmtD(i['Date'])) + '</b> · ' + esc(i['Type']) + ' · ' + esc(i['Logged By'])
     + (o.showOrg ? ' · ' + esc(orgName(resolveOrgId(i['Org ID']))) : '') + (eng ? ' · ' + esc(engLabel(eng)) : '') + '</div>'
+    + (REG.routes['edit-int'] ? '<a class="link-btn int-edit" href="#/edit-int/' + escA(i['Interaction ID']) + '">Edit</a>' : '') + '</div>'
     + '<div class="int-sum">' + esc(i['Summary']) + '</div>'
     + (i['Spoke With'] ? '<div class="small muted">With ' + esc(i['Spoke With']) + '</div>' : '')
     + ((i['Next Step'] || fu) ? '<div class="int-next">' + (i['Next Step'] ? 'Next: ' + esc(i['Next Step']) : '') + fu + '</div>' : '') + '</div>';
@@ -595,17 +604,18 @@ function orgFormHtml(o) {
     + '</div>';
 }
 
-/* ---------- home screen shell: tabs register themselves ---------- */
+/* ---------- home screen shell: tabs and banners register themselves ---------- */
 REG.routes.home = function () {
   setChrome({
     title: brandTitle(), sub: S.cfg.workspaceName || '', back: false,
-    actions: (REG.addMenu.length ? '<button class="btn btn-sm btn-primary" data-act="core.add">+ Add</button>' : '') + '<button class="link-btn" data-act="core.settings">Settings</button>'
+    actions: refreshBtn() + (REG.addMenu.length ? '<button class="btn btn-sm btn-primary" data-act="core.add">+ Add</button>' : '') + '<button class="link-btn" data-act="core.settings">Settings</button>'
   });
   const tabs = REG.homeTabs.slice().sort((a, b) => a.order - b.order);
   if (!tabs.length) { show('<div class="empty">Nothing to show yet.</div>'); return; }
   let cur = tabs.find(t => t.id === S.ui.tab) || tabs[0];
   S.ui.tab = cur.id;
-  show('<div class="identity-bar"><span>Using as <strong>' + esc(S.me) + '</strong></span><button class="link-btn" data-act="core.who">Not you?</button></div>'
+  show(REG.homeBanners.map(f => f()).join('')
+    + '<div class="identity-bar"><span>Using as <strong>' + esc(S.me) + '</strong></span><button class="link-btn" data-act="core.who">Not you?</button></div>'
     + '<div class="tabs">' + tabs.map(t => '<button class="tab' + (t.id === cur.id ? ' active' : '') + '" data-act="core.tab" data-id="' + escA(t.id) + '">' + esc(t.label) + '</button>').join('') + '</div>'
     + '<div id="tabBody"></div>');
   cur.render($('#tabBody'));
@@ -638,7 +648,7 @@ REG.routes.settings = function () {
  * Screen: Home > Organisations
  * Delta: New home tab. Search box, a Filters panel (type, city, tag, owner, stage) and a list of active organisations.
  * Validations: Form: none; every filter is optional.
- * Calculations: Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Owner and Stage filters match organisations that have at least one engagement of this team meeting both [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the team's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].
+ * Calculations: Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Owner and Stage filters match organisations that have at least one engagement of this company meeting both [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the company's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].
  * Dependencies: Org Master (Orgs); Engagements; Products; F03 (row opens the organisation page).
  * @end */
 const F02 = { q: '', type: '', city: '', tag: '', owner: '', stage: '', open: false, shown: 60 };
@@ -714,9 +724,9 @@ function f02_list() {
  * Feature: Organisation briefing page
  * Status: New
  * Screen: Organisation page (opened from any list)
- * Delta: New screen: name, type, place, website, tags, last contact, contacts, about, the team's engagements and recent interactions, and who created and last updated the record.
+ * Delta: New screen: name, type, place, website, tags, last contact, contacts, about, the company's engagements and recent interactions, and who created and last updated the record.
  * Validations: Form: none (read-only page).
- * Calculations: Last contact is the latest interaction Date among this team's interactions with the organisation [CONFIRMED]. Opening an archived organisation shows the organisation named in Archived To instead [CONFIRMED]. Engagements and interactions recorded against an archived Org ID appear on the replacement organisation [CONFIRMED]. Phone numbers and email addresses in Contacts become tappable links [CONFIRMED]. Created by and Last updated by show Name (Workspace Name) so another team can see whom to ask [CONFIRMED].
+ * Calculations: Last contact is the latest interaction Date among this company's interactions with the organisation [CONFIRMED]. Opening an archived organisation shows the organisation named in Archived To instead [CONFIRMED]. Engagements and interactions recorded against an archived Org ID appear on the replacement organisation [CONFIRMED]. Phone numbers and email addresses in Contacts become tappable links [CONFIRMED]. Created by and Last updated by show Name (Workspace Name) so another company can see whom to ask [CONFIRMED].
  * Dependencies: Org Master (Orgs); Engagements; Interactions; sections added by F08 and F10; actions added by F05, F06, F07 and F10.
  * @end */
 REG.routes.org = function (args) {
@@ -724,7 +734,7 @@ REG.routes.org = function (args) {
   const rid = resolveOrgId(id);
   if (rid !== id) { replace('org/' + rid); return; }
   const o = S.idx.org[id];
-  page(o ? o['Org Name'] : 'Organisation');
+  page(o ? o['Org Name'] : 'Organisation', true, refreshBtn());
   if (!o) { show('<div class="empty">That organisation could not be found.</div>'); return; }
   const last = S.idx.lastByOrg[id];
   const place = [o['City'], o['State']].filter(Boolean).join(', ');
@@ -857,12 +867,12 @@ REG.routes['archive-org'] = function (args) {
 /* ==== BEGIN F07 — Add engagements ============================================ */
 /* @spec F07
  * Feature: Add engagements
- * Status: New
+ * Status: Modified in v2
  * Screen: Organisation page > Add engagement
- * Delta: New form. Several products can be ticked in one save, which creates one engagement per product. Products that already have an engagement with this organisation are shown crossed out and cannot be ticked.
+ * Delta: New form. Several products can be ticked in one save, which creates one engagement per product. Products that already have an engagement with this organisation are shown crossed out and cannot be ticked. In v2 products come from the Products tab of the company sheet (the Manage products screen was removed).
  * Validations: Form: at least one product, an owner and a start date are required. Only active products are offered. Key contact, expectations and the document link are optional. The server repeats every check, including one engagement per organisation and product.
  * Calculations: Stage starts as New [CONFIRMED]. The owner defaults to the person using the tool [CONFIRMED]. Start date defaults to today [CONFIRMED]. After saving, the organisation page opens [CONFIRMED].
- * Dependencies: Products; Members; Engagements; F12 (products must exist).
+ * Dependencies: Products (typed in the company sheet); Members; Engagements.
  * @end */
 REG.orgActions.push({ order: 2, placement: 'bar', label: 'Add engagement', route: o => 'add-eng/' + o['Org ID'] });
 REG.routes['add-eng'] = function (args) {
@@ -870,7 +880,7 @@ REG.routes['add-eng'] = function (args) {
   page('Add engagement');
   if (!o || o['Record Status'] === 'Archived') { show('<div class="empty">This organisation cannot take new engagements.</div>'); return; }
   const prods = S.products.filter(p => isYes(p['Active']));
-  if (!prods.length) { show('<div class="empty">There are no products yet.' + (REG.routes.products ? '<br><a class="btn btn-primary" href="#/products">Add products</a>' : '') + '</div>'); return; }
+  if (!prods.length) { show('<div class="empty">There are no active products yet.</div>'); return; }
   const taken = (S.idx.engByOrg[o['Org ID']] || []).map(e => e['Product ID']);
   show('<div class="card"><div class="org-name">' + esc(o['Org Name']) + '</div>'
     + fChips('Products', 'Products or services', prods.map(p => ({ v: p['Product ID'], l: p['Product Name'], disabled: taken.indexOf(p['Product ID']) >= 0 })), { multi: true, req: true })
@@ -902,7 +912,7 @@ REG.routes['add-eng'] = function (args) {
  * Delta: New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page.
  * Validations: Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the stage is Not interested. The server repeats every check.
  * Calculations: Tapping a stage saves it at once and sets Stage Changed On to today; tapping Not interested opens the edit form so the reason can be added [CONFIRMED]. Last contact is the latest interaction Date for the engagement [CONFIRMED]. An engagement is flagged Going cold when its stage is New or In progress and the days since its last interaction (or its start date if there is none) exceed Stale After Days [CONFIRMED]. Converted and Not interested engagements are never flagged [CONFIRMED]. Engagements on the organisation page are ordered New and In progress first, then Converted, then Not interested, newest start first [CONFIRMED].
- * Dependencies: Engagements; Products; Interactions; Lists (Team): Stage; Config: Stale After Days; Members.
+ * Dependencies: Engagements; Products; Interactions; Lists (Company): Stage; Config: Stale After Days; Members.
  * @end */
 function f08_order(e) { const i = ['New', 'In progress', 'Converted', STAGE_NI].indexOf(e['Stage']); return i < 0 ? 9 : i; }
 REG.orgSections.push({
@@ -918,7 +928,7 @@ REG.orgSections.push({
 });
 REG.routes.eng = function (args) {
   const e = S.idx.eng[args[0]];
-  page(e ? engLabel(e) : 'Engagement');
+  page(e ? engLabel(e) : 'Engagement', true, refreshBtn());
   if (!e) { show('<div class="empty">That engagement could not be found.</div>'); return; }
   const rid = resolveOrgId(e['Org ID']);
   const last = S.idx.lastByEng[e['Engagement ID']];
@@ -984,7 +994,7 @@ REG.routes['edit-eng'] = function (args) {
  * Feature: Engagements work list
  * Status: New
  * Screen: Home > Engagements
- * Delta: New home tab listing the team's engagements with owner and stage filters and a Going cold flag.
+ * Delta: New home tab listing the company's engagements with owner and stage filters and a Going cold flag.
  * Validations: Form: none; both filters are optional.
  * Calculations: The Owner filter starts as the person using the tool and can be set to All or another person [CONFIRMED]. The Stage filter starts as Open (New and In progress) and can be set to All or a single stage [CONFIRMED]. Going cold rows are listed first, then the longest since last contact first [CONFIRMED]. Each row shows the days since the last contact, or No contact yet [CONFIRMED].
  * Dependencies: Engagements; Interactions; Products; Config: Stale After Days; F08 (row opens the engagement page).
@@ -1017,12 +1027,12 @@ function f09_list() {
 /* ==== BEGIN F10 — Log interaction ============================================ */
 /* @spec F10
  * Feature: Log interaction
- * Status: New
+ * Status: Modified in v2
  * Screen: Home > Add > Log interaction; Organisation page > Log interaction; Engagement page > Log interaction
- * Delta: New form and a new Interactions list on the organisation page (latest five, with Show all). An interaction belongs to the organisation, with the engagement optional.
+ * Delta: New form and a new Interactions list on the organisation page (latest five, with Show all). An interaction belongs to the organisation, with the engagement optional. In v2 the Next step box is multi-line, like What happened, and line breaks are shown as typed on the organisation, engagement and follow-up screens.
  * Validations: Form: organisation (when not already chosen), date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The engagement choice lists only this organisation's engagements. The server repeats every check.
  * Calculations: Date defaults to today and Logged by to the person using the tool [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. After saving, the engagement page opens when the form was started from an engagement, otherwise the organisation page [CONFIRMED].
- * Dependencies: Interactions; Engagements; Org Master (Orgs); Lists (Team): Interaction Type; Members.
+ * Dependencies: Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members.
  * @end */
 REG.addMenu.push({ order: 2, label: 'Log interaction', route: 'log' });
 REG.orgActions.push({ order: 1, placement: 'bar', primary: true, label: 'Log interaction', route: o => 'log/' + o['Org ID'] });
@@ -1048,7 +1058,7 @@ REG.routes.log = function (args) {
     + fText('Spoke With', 'Spoke with')
     + fChoice('Logged By', 'Logged by', activeNames(), { req: true, value: S.me })
     + fText('Summary', 'What happened?', { req: true, area: true, rows: 4 })
-    + fText('Next Step', 'Next step')
+    + fText('Next Step', 'Next step', { area: true, rows: 3 })
     + fDate('Follow-up Date', 'Follow up on', { min: todayStr() }) + '</div>',
     '<button class="btn btn-primary" id="f10save">Save</button>');
   f10_fillEng(fixed, engId);
@@ -1115,7 +1125,7 @@ function f11_list() {
     return '<div class="row"><div class="row-top"><a href="#/' + (x.e ? 'eng/' + escA(x.e['Engagement ID']) : 'org/' + escA(x.org)) + '" style="flex:1;min-width:0;text-decoration:none;color:inherit">'
       + '<div class="row-title">' + esc(orgName(x.org)) + (x.e ? ' — ' + esc(engLabel(x.e)) : '') + '</div>'
       + '<div class="row-sub"><span class="' + (late ? 'overdue' : '') + '">' + esc(due) + '</span> · ' + esc(x.owner) + '</div>'
-      + (x.i['Next Step'] ? '<div>' + esc(x.i['Next Step']) + '</div>' : '') + '<div class="small muted">' + esc(x.i['Summary'].slice(0, 110)) + (x.i['Summary'].length > 110 ? '…' : '') + '</div></a>'
+      + (x.i['Next Step'] ? '<div class="pre">' + esc(x.i['Next Step']) + '</div>' : '') + '<div class="small muted">' + esc(x.i['Summary'].slice(0, 110)) + (x.i['Summary'].length > 110 ? '…' : '') + '</div></a>'
       + '<button class="btn btn-sm" data-act="f11.done" data-id="' + escA(x.i['Interaction ID']) + '">Done</button></div></div>';
   }).join('') + '</div>' : '<div class="empty">No follow-ups waiting.</div>';
 }
@@ -1128,48 +1138,8 @@ REG.acts['f11.done'] = async el => {
 /* ==== END F11 ================================================================ */
 
 
-/* ==== BEGIN F12 — Manage products ============================================ */
-/* @spec F12
- * Feature: Manage products
- * Status: New
- * Screen: Settings > Products
- * Delta: New screen to add products and to rename, describe, activate or deactivate them. Products are created here and never typed into the sheet.
- * Validations: Form: product name is required for a new product and when renaming. The server checks the name is up to 80 characters and unique ignoring case and spaces.
- * Calculations: Product ID is issued by the server [CONFIRMED]. New products are active [CONFIRMED]. An inactive product stays on old engagements but cannot be chosen for new ones [CONFIRMED].
- * Dependencies: Products; F07 (only active products are offered).
- * @end */
-REG.settingsItems.push({ group: 'Master data and reference', order: 1, label: 'Products', route: 'products' });
-REG.routes.products = function () {
-  page('Products');
-  const rows = S.products.slice().sort((a, b) => a['Product Name'].localeCompare(b['Product Name']));
-  show('<div class="card" id="f12add"><div class="card-title">New product</div>' + fText('Product Name', 'Name', { req: true }) + fText('Description', 'Description') + '</div>'
-    + rows.map(p => '<div class="card" data-pid="' + escA(p['Product ID']) + '"><div class="card-title"><span>' + esc(p['Product ID']) + '</span></div>'
-      + fText('Product Name', 'Name', { req: true, value: p['Product Name'] }) + fText('Description', 'Description', { value: p['Description'] })
-      + fChips('Active', 'Active', ['Yes', 'No'], { req: true, value: isYes(p['Active']) ? 'Yes' : 'No' })
-      + '<div style="margin-top:12px"><button class="btn btn-sm" data-act="f12.save" data-id="' + escA(p['Product ID']) + '">Save</button></div></div>').join(''),
-    '<button class="btn btn-primary" id="f12new">Add product</button>');
-  $('#f12new').addEventListener('click', () => {
-    const root = $('#f12add'); const miss = validateForm(root);
-    if (miss) { barError(miss); return; }
-    runSave($('#f12new'), async () => {
-      const f = readForm(root);
-      const d = await api('addProduct', { by: S.me, name: f['Product Name'], description: f['Description'] }, true);
-      upsert(S.products, 'Product ID', d.product); reindex();
-      confirmed('Added.', d.product['Product Name'] + ' is ready to use.');
-      REG.routes.products();
-    });
-  });
-};
-REG.acts['f12.save'] = async el => {
-  const card = el.closest('[data-pid]'); const miss = validateForm(card);
-  if (miss) { toast(miss); return; }
-  const f = readForm(card);
-  try {
-    const d = await api('updateProduct', { by: S.me, productId: card.dataset.pid, name: f['Product Name'], description: f['Description'], active: f['Active'] }, true);
-    upsert(S.products, 'Product ID', d.product); reindex(); toast('Saved.');
-  } catch (err) { toast(err.message); }
-};
-/* ==== END F12 ================================================================ */
+/* (F12 Manage products was removed in v2: products are typed in the company
+    sheet. The number F12 is retired and is not reused.) */
 
 /* ==== BEGIN F13 — Hand over engagements (bulk reassign) ====================== */
 /* @spec F13
@@ -1218,10 +1188,10 @@ REG.routes.reassign = function () {
  * Feature: Import organisations
  * Status: New
  * Screen: Settings > Import organisations
- * Delta: New screen that checks organisations pasted into the Import tab of the team sheet and loads them into the Org Master. Organisations only; engagements and interactions are not imported.
+ * Delta: New screen that checks organisations pasted into the Import tab of the company sheet and loads them into the Org Master. Organisations only; engagements and interactions are not imported.
  * Validations: Form: nothing can be loaded until the check has run. Rows with errors cannot be loaded. The server repeats the checks on each row when loading.
  * Calculations: Each row is shown as ready, possible duplicate or error [CONFIRMED]. Ready rows are loaded; each possible duplicate is skipped unless the user chooses Load anyway [CONFIRMED]. The Load button counts ready rows plus duplicates set to load [CONFIRMED]. Loaded rows get a Result in the Import tab and are not offered again [CONFIRMED]. After loading, the tool reloads its data [CONFIRMED].
- * Dependencies: Import tab (team sheet); Org Master (Orgs, Lists, Config); Members; F01 (data reload).
+ * Dependencies: Import tab (company sheet); Org Master (Orgs, Lists, Config); Members; F01 (data reload).
  * @end */
 REG.settingsItems.push({ group: 'Master data and reference', order: 2, label: 'Import organisations', route: 'import' });
 const F14 = { prev: null };
@@ -1275,6 +1245,84 @@ function f14_show() {
 }
 /* ==== END F14 ================================================================ */
 
+/* ==== BEGIN F15 — Product list check ========================================= */
+/* @spec F15
+ * Feature: Product list check
+ * Status: New in v2
+ * Screen: Home (notice at the top)
+ * Delta: New notice on the Home screen when the Products tab of the company sheet has a problem. It lists each problem with the sheet row to fix. It does not block anything: the tool keeps working.
+ * Validations: Form: none. The checks run on the server when the data loads (see the server note).
+ * Calculations: The notice is shown only when there is something to fix and disappears once the sheet is corrected and the data is refreshed [CONFIRMED].
+ * Dependencies: Products (company sheet); F17 (Refresh) to see a correction without reloading the page.
+ * @end */
+REG.homeBanners.push(function () {
+  const w = S.productWarnings || [];
+  if (!w.length) return '';
+  return '<div class="banner"><b>A few things to fix in the Products tab</b><ul>' + w.map(x => '<li>' + esc(x.message) + '</li>').join('') + '</ul></div>';
+});
+/* ==== END F15 ================================================================ */
+
+/* ==== BEGIN F16 — Edit interaction =========================================== */
+/* @spec F16
+ * Feature: Edit interaction
+ * Status: New in v2
+ * Screen: Organisation page > Interactions > Edit; Engagement page > Interactions > Edit
+ * Delta: New Edit link on every interaction and a new form with the saved values. Date, how you were in touch, who you spoke with, who logged it, what happened, next step, follow-up date and the product it was about can all be changed. The organisation cannot be changed.
+ * Validations: Form: date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The product choice lists only this organisation's engagements. The server repeats every check.
+ * Calculations: Clearing the follow-up date, or choosing a different follow-up date, makes the follow-up open again [UNVERIFIED — NEEDS CONFIRMATION]. After saving, the screen the person came from opens again with the changes [CONFIRMED].
+ * Dependencies: Interactions; Engagements; Lists (Company): Interaction Type; Members; F10 (shared product picker helper f10_fillEng).
+ * @end */
+REG.routes['edit-int'] = function (args) {
+  const i = S.interactions.find(x => x['Interaction ID'] === args[0]);
+  page('Edit interaction');
+  if (!i) { show('<div class="empty">That interaction could not be found.</div>'); return; }
+  const orgId = resolveOrgId(i['Org ID']);
+  const names = activeNames(); if (names.indexOf(i['Logged By']) < 0) names.push(i['Logged By']);
+  const types = S.lists.interactionType.slice(); if (types.indexOf(i['Type']) < 0) types.push(i['Type']);
+  show('<div class="card"><div class="org-name">' + esc(orgName(orgId)) + '</div>'
+    + fSelect('Engagement ID', 'About which product?', [], { blank: 'General, no specific product' })
+    + fDate('Date', 'Date', { req: true, value: i['Date'], max: todayStr() })
+    + fChoice('Type', 'How were you in touch?', types, { req: true, value: i['Type'] })
+    + fText('Spoke With', 'Spoke with', { value: i['Spoke With'] })
+    + fChoice('Logged By', 'Logged by', names, { req: true, value: i['Logged By'] })
+    + fText('Summary', 'What happened?', { req: true, area: true, rows: 4, value: i['Summary'] })
+    + fText('Next Step', 'Next step', { area: true, rows: 3, value: i['Next Step'] })
+    + fDate('Follow-up Date', 'Follow up on', { value: i['Follow-up Date'], min: i['Date'] }) + '</div>',
+    '<button class="btn btn-primary" id="f16save">Save changes</button>');
+  f10_fillEng(orgId, i['Engagement ID']);
+  $('#f16save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    const f = readForm(root);
+    if (f['Follow-up Date'] && f['Follow-up Date'] < f['Date']) { barError('The follow-up date cannot be earlier than the date of contact.'); return; }
+    runSave($('#f16save'), async () => {
+      const d = await api('updateInteraction', { by: S.me, interactionId: i['Interaction ID'], fields: f }, true);
+      upsert(S.interactions, 'Interaction ID', d.interaction); reindex();
+      confirmed('Saved.', 'The interaction is up to date.');
+      back();
+    });
+  });
+};
+/* ==== END F16 ================================================================ */
+
+/* ==== BEGIN F17 — Refresh ==================================================== */
+/* @spec F17
+ * Feature: Refresh
+ * Status: New in v2
+ * Screen: Header on Home, Organisation page and Engagement page
+ * Delta: New refresh button in the header that fetches the latest data from the sheets without reloading the page. Filters, the open tab and the scroll position are kept. It is not shown on forms, so a half-filled form is never lost.
+ * Validations: Form: none.
+ * Calculations: Refresh fetches the same data as the first load and redraws the current screen [CONFIRMED]. If the fetch fails, a message appears and the data already on screen is kept [CONFIRMED]. The Settings > Reload link does the same and stays.
+ * Dependencies: F01 (data load).
+ * @end */
+REG.acts['f17.refresh'] = async el => {
+  el.disabled = true; el.classList.add('spin');
+  const y = window.scrollY;
+  try { await refreshData(); route(); window.scrollTo(0, y); toast('Up to date.'); }
+  catch (e) { el.disabled = false; el.classList.remove('spin'); toast(e.message); }
+};
+/* ==== END F17 ================================================================ */
+
 /* ==== Feature Spec view (generated from the spec tags at build time) ========= */
 const FEATURE_SPEC = [
  {
@@ -1284,7 +1332,7 @@ const FEATURE_SPEC = [
   "delta": "New start-up flow: the web app address (from the landing page link ?url=, or typed once), the team key, and the person using the tool. All three are remembered on the device. The page title, heading and main colour come from Config.",
   "validations": "Form: the web app address must answer; the team key is required and is checked by the server on every request; the person must be chosen from active members.",
   "calculations": "Remembered values are kept per web app address, so two workspaces opened from the same page do not mix [CONFIRMED]. Heading is Tool Title (default Relationships), the subtitle is Workspace Name, and the colour is Primary Colour with darker and softer shades worked out from it [CONFIRMED]. Today's date comes from the server in the Config timezone [CONFIRMED].",
-  "dependencies": "Config (Team): Team Key, Workspace Name, Tool Title, Primary Colour, Timezone; Members.",
+  "dependencies": "Config (Company): Team Key, Workspace Name, Tool Title, Primary Colour, Timezone; Members.",
   "id": "F01"
  },
  {
@@ -1293,7 +1341,7 @@ const FEATURE_SPEC = [
   "screen": "Home > Organisations",
   "delta": "New home tab. Search box, a Filters panel (type, city, tag, owner, stage) and a list of active organisations.",
   "validations": "Form: none; every filter is optional.",
-  "calculations": "Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Owner and Stage filters match organisations that have at least one engagement of this team meeting both [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the team's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].",
+  "calculations": "Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Owner and Stage filters match organisations that have at least one engagement of this company meeting both [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the company's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].",
   "dependencies": "Org Master (Orgs); Engagements; Products; F03 (row opens the organisation page).",
   "id": "F02"
  },
@@ -1301,9 +1349,9 @@ const FEATURE_SPEC = [
   "feature": "Organisation briefing page",
   "status": "New",
   "screen": "Organisation page (opened from any list)",
-  "delta": "New screen: name, type, place, website, tags, last contact, contacts, about, the team's engagements and recent interactions, and who created and last updated the record.",
+  "delta": "New screen: name, type, place, website, tags, last contact, contacts, about, the company's engagements and recent interactions, and who created and last updated the record.",
   "validations": "Form: none (read-only page).",
-  "calculations": "Last contact is the latest interaction Date among this team's interactions with the organisation [CONFIRMED]. Opening an archived organisation shows the organisation named in Archived To instead [CONFIRMED]. Engagements and interactions recorded against an archived Org ID appear on the replacement organisation [CONFIRMED]. Phone numbers and email addresses in Contacts become tappable links [CONFIRMED]. Created by and Last updated by show Name (Workspace Name) so another team can see whom to ask [CONFIRMED].",
+  "calculations": "Last contact is the latest interaction Date among this company's interactions with the organisation [CONFIRMED]. Opening an archived organisation shows the organisation named in Archived To instead [CONFIRMED]. Engagements and interactions recorded against an archived Org ID appear on the replacement organisation [CONFIRMED]. Phone numbers and email addresses in Contacts become tappable links [CONFIRMED]. Created by and Last updated by show Name (Workspace Name) so another company can see whom to ask [CONFIRMED].",
   "dependencies": "Org Master (Orgs); Engagements; Interactions; sections added by F08 and F10; actions added by F05, F06, F07 and F10.",
   "id": "F03"
  },
@@ -1312,9 +1360,9 @@ const FEATURE_SPEC = [
   "status": "New",
   "screen": "Home > Add > Organisation",
   "delta": "New form and a duplicate warning. Entry point is registered in the Add menu; the form can be opened from an empty search with the typed name filled in.",
-  "validations": "Form: Organisation name and Type are required; the page scrolls to the first missing field and nothing is saved. Website is accepted with or without https://. The server repeats every check. Server: Server checks: Org Name is required, up to 120 characters. Org Type is required and must be in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address; https:// is added when missing. Added by must be an active member.",
-  "calculations": "Before saving, existing records with the same name (ignoring case and spaces) or the same website domain are listed with Open and Add anyway [CONFIRMED]. Org ID, stamps and the counter are set by the server on save [CONFIRMED]. After saving, the new organisation page opens [CONFIRMED]. Server: Org ID is the highest existing number in the Org Master plus 1 (and never lower than Config > Next Org Number), written as ORG- plus 4 digits, under a script lock [CONFIRMED]. After the row is written the script checks the ID appears once and issues a new one if another team's script created the same ID at the same moment [CONFIRMED]. Next Org Number is then set to the highest ID plus 1 [CONFIRMED]. Duplicate check: an existing record, Active or Archived, with the same name ignoring case and spaces, or the same website domain ignoring www, is returned as a warning and the record is not saved until the user confirms [CONFIRMED]. Created On/By and Last Updated On/By are set on save as Name (Workspace Name) [CONFIRMED].",
-  "dependencies": "Org Master (Orgs, Lists); Members; shared form helper orgFormHtml. Server: Org Master (Orgs, Lists, Config); Config (Team): Workspace Name, Master Sheet ID; Members.",
+  "validations": "Form: Organisation name and Type are required; the page scrolls to the first missing field and nothing is saved. Website is accepted with or without https://. The server repeats every check. Server checks: Org Name is required, up to 120 characters. Org Type is required and must be in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address; https:// is added when missing. Added by must be an active member.",
+  "calculations": "Before saving, existing records with the same name (ignoring case and spaces) or the same website domain are listed with Open and Add anyway [CONFIRMED]. Org ID, stamps and the counter are set by the server on save [CONFIRMED]. After saving, the new organisation page opens [CONFIRMED]. Server: Org ID is the highest existing number in the Org Master plus 1 (and never lower than Config > Next Org Number), written as ORG- plus 4 digits, under a script lock [CONFIRMED]. After the row is written the script checks the ID appears once and issues a new one if another company's script created the same ID at the same moment [CONFIRMED]. Next Org Number is then set to the highest ID plus 1 [CONFIRMED]. Duplicate check: an existing record, Active or Archived, with the same name ignoring case and spaces, or the same website domain ignoring www, is returned as a warning and the record is not saved until the user confirms [CONFIRMED]. Created On/By and Last Updated On/By are set on save as Name (Workspace Name) [CONFIRMED].",
+  "dependencies": "Org Master (Orgs, Lists); Members; shared form helper orgFormHtml. Server: Org Master (Orgs, Lists, Config); Config (Company): Workspace Name, Master Sheet ID; Members.",
   "id": "F04"
  },
  {
@@ -1322,9 +1370,9 @@ const FEATURE_SPEC = [
   "status": "New",
   "screen": "Organisation page > Edit details",
   "delta": "New form, the same fields as Add organisation, filled with the saved values. Includes the Contacts and About text.",
-  "validations": "Form: Organisation name and Type are required. The server repeats every check and refuses archived records. Server: Server checks: same field rules as Add organisation. Org ID cannot be changed. An archived organisation cannot be edited. Saved by must be an active member.",
+  "validations": "Form: Organisation name and Type are required. The server repeats every check and refuses archived records. Server checks: same field rules as Add organisation. Org ID cannot be changed. An archived organisation cannot be edited. Saved by must be an active member.",
   "calculations": "Last Updated On and By are set by the server on every save [CONFIRMED]. Created On and By are not changed [CONFIRMED]. After saving, the organisation page opens [CONFIRMED]. Server: Last Updated On/By are set on every save, as Name (Workspace Name) [CONFIRMED]. Created On/By are never changed [CONFIRMED].",
-  "dependencies": "Org Master (Orgs, Lists); Members; shared form helper orgFormHtml. Server: Org Master (Orgs, Lists); Members; Config (Team): Workspace Name.",
+  "dependencies": "Org Master (Orgs, Lists); Members; shared form helper orgFormHtml. Server: Org Master (Orgs, Lists); Members; Config (Company): Workspace Name.",
   "id": "F05"
  },
  {
@@ -1332,19 +1380,19 @@ const FEATURE_SPEC = [
   "status": "New",
   "screen": "Organisation page > Mark as duplicate",
   "delta": "New screen to pick the record that replaces this one. Records are archived, never deleted or merged.",
-  "validations": "Form: the replacement is required and is chosen from active organisations other than this one. The server repeats the checks. Server: Server checks: the replacement organisation must exist, be Active, and be a different record. An organisation that is already archived cannot be archived again. Saved by must be an active member.",
+  "validations": "Form: the replacement is required and is chosen from active organisations other than this one. The server repeats the checks. Server checks: the replacement organisation must exist, be Active, and be a different record. An organisation that is already archived cannot be archived again. Saved by must be an active member.",
   "calculations": "After saving, the old record is hidden from search and lists and opening it shows the replacement; its engagements and interactions appear on the replacement [CONFIRMED]. Server: Record Status becomes Archived and Archived To holds the replacement Org ID; the record stays in the sheet and Last Updated On/By are set [CONFIRMED]. Org IDs stored on engagements and interactions are not rewritten; they are resolved through Archived To when read [CONFIRMED].",
   "dependencies": "Org Master (Orgs); F03 (redirect and combined history). Server: Org Master (Orgs); Members.",
   "id": "F06"
  },
  {
   "feature": "Add engagements",
-  "status": "New",
+  "status": "Modified in v2",
   "screen": "Organisation page > Add engagement",
-  "delta": "New form. Several products can be ticked in one save, which creates one engagement per product. Products that already have an engagement with this organisation are shown crossed out and cannot be ticked.",
-  "validations": "Form: at least one product, an owner and a start date are required. Only active products are offered. Key contact, expectations and the document link are optional. The server repeats every check, including one engagement per organisation and product. Server: Server checks: the organisation must exist (an archived one is replaced by its Archived To record). At least one product must be chosen; each must exist and be Active. A product that already has an engagement with this organisation is rejected. Owner must be an active member. Start Date must be a valid date. Document Link, if given, must be a web address.",
-  "calculations": "Stage starts as New [CONFIRMED]. The owner defaults to the person using the tool [CONFIRMED]. Start date defaults to today [CONFIRMED]. After saving, the organisation page opens [CONFIRMED]. Server: One engagement is created per chosen product, all with the same owner, key contact, expectations, start date and document link [CONFIRMED]. Engagement ID is the highest existing number plus 1, written as ENG- plus 4 digits, under a script lock [CONFIRMED]. Stage starts as New; Stage Changed On is set to today [CONFIRMED]. Created On/By are set on save [CONFIRMED].",
-  "dependencies": "Products; Members; Engagements; F12 (products must exist). Server: Products; Members; Org Master (Orgs); Lists (Team): Stage.",
+  "delta": "New form. Several products can be ticked in one save, which creates one engagement per product. Products that already have an engagement with this organisation are shown crossed out and cannot be ticked. In v2 products come from the Products tab of the company sheet (the Manage products screen was removed).",
+  "validations": "Form: at least one product, an owner and a start date are required. Only active products are offered. Key contact, expectations and the document link are optional. The server repeats every check, including one engagement per organisation and product. Server checks: the organisation must exist (an archived one is replaced by its Archived To record). At least one product must be chosen; each must exist and be Active. A product that already has an engagement with this organisation is rejected. Owner must be an active member. Start Date must be a valid date. Document Link, if given, must be a web address.",
+  "calculations": "Stage starts as New [CONFIRMED]. The owner defaults to the person using the tool [CONFIRMED]. Start date defaults to today [CONFIRMED]. After saving, the organisation page opens [CONFIRMED]. Server: One engagement is created per chosen product, all with the same owner, key contact, expectations, start date and document link [CONFIRMED]. Engagement ID is the highest existing number plus 1, written as ENG- plus 4 digits, under a script lock [CONFIRMED]. Stage starts as New; Stage Changed On is set to today [CONFIRMED]. Created On/By are set on save [CONFIRMED]. Product IDs read from the Products tab are trimmed of leading and trailing spaces before they are matched [CONFIRMED].",
+  "dependencies": "Products (typed in the company sheet); Members; Engagements. Server: Products (typed in the company sheet); Members; Org Master (Orgs); Lists (Company): Stage.",
   "id": "F07"
  },
  {
@@ -1352,16 +1400,16 @@ const FEATURE_SPEC = [
   "status": "New",
   "screen": "Organisation page > Engagements; Engagement page; Engagement page > Edit",
   "delta": "New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page.",
-  "validations": "Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the stage is Not interested. The server repeats every check. Server: Server checks: Stage must be in Lists (Team) > Stage. A changed Owner must be an active member. Start Date and Revisit On must be valid dates, and Revisit On cannot be earlier than Start Date. Document Link, if given, must be a web address. Org ID and Product ID cannot be changed. Saved by must be an active member.",
+  "validations": "Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the stage is Not interested. The server repeats every check. Server checks: Stage must be in Lists (Company) > Stage. A changed Owner must be an active member. Start Date and Revisit On must be valid dates, and Revisit On cannot be earlier than Start Date. Document Link, if given, must be a web address. Org ID and Product ID cannot be changed. Saved by must be an active member.",
   "calculations": "Tapping a stage saves it at once and sets Stage Changed On to today; tapping Not interested opens the edit form so the reason can be added [CONFIRMED]. Last contact is the latest interaction Date for the engagement [CONFIRMED]. An engagement is flagged Going cold when its stage is New or In progress and the days since its last interaction (or its start date if there is none) exceed Stale After Days [CONFIRMED]. Converted and Not interested engagements are never flagged [CONFIRMED]. Engagements on the organisation page are ordered New and In progress first, then Converted, then Not interested, newest start first [CONFIRMED]. Server: Stage Changed On is set to today whenever Stage changes [CONFIRMED]. Not Interested Reason and Revisit On are kept as saved when the stage later changes; they are not cleared automatically [CONFIRMED].",
-  "dependencies": "Engagements; Products; Interactions; Lists (Team): Stage; Config: Stale After Days; Members. Server: Engagements; Lists (Team): Stage; Members.",
+  "dependencies": "Engagements; Products; Interactions; Lists (Company): Stage; Config: Stale After Days; Members. Server: Engagements; Lists (Company): Stage; Members.",
   "id": "F08"
  },
  {
   "feature": "Engagements work list",
   "status": "New",
   "screen": "Home > Engagements",
-  "delta": "New home tab listing the team's engagements with owner and stage filters and a Going cold flag.",
+  "delta": "New home tab listing the company's engagements with owner and stage filters and a Going cold flag.",
   "validations": "Form: none; both filters are optional.",
   "calculations": "The Owner filter starts as the person using the tool and can be set to All or another person [CONFIRMED]. The Stage filter starts as Open (New and In progress) and can be set to All or a single stage [CONFIRMED]. Going cold rows are listed first, then the longest since last contact first [CONFIRMED]. Each row shows the days since the last contact, or No contact yet [CONFIRMED].",
   "dependencies": "Engagements; Interactions; Products; Config: Stale After Days; F08 (row opens the engagement page).",
@@ -1369,12 +1417,12 @@ const FEATURE_SPEC = [
  },
  {
   "feature": "Log interaction",
-  "status": "New",
+  "status": "Modified in v2",
   "screen": "Home > Add > Log interaction; Organisation page > Log interaction; Engagement page > Log interaction",
-  "delta": "New form and a new Interactions list on the organisation page (latest five, with Show all). An interaction belongs to the organisation, with the engagement optional.",
-  "validations": "Form: organisation (when not already chosen), date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The engagement choice lists only this organisation's engagements. The server repeats every check. Server: Server checks: the organisation must exist (archived resolves to its replacement). If an engagement is given it must belong to the same organisation. Date is required, a valid date and not later than today. Type must be in Lists (Team) > Interaction Type. Logged By must be an active member. Summary is required. Follow-up Date, if given, is a valid date and not earlier than Date.",
-  "calculations": "Date defaults to today and Logged by to the person using the tool [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. After saving, the engagement page opens when the form was started from an engagement, otherwise the organisation page [CONFIRMED]. Server: Interaction ID is the highest existing number plus 1, written as INT- plus 4 digits, under a script lock [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. Created On is set on save [CONFIRMED].",
-  "dependencies": "Interactions; Engagements; Org Master (Orgs); Lists (Team): Interaction Type; Members.",
+  "delta": "New form and a new Interactions list on the organisation page (latest five, with Show all). An interaction belongs to the organisation, with the engagement optional. In v2 the Next step box is multi-line, like What happened, and line breaks are shown as typed on the organisation, engagement and follow-up screens.",
+  "validations": "Form: organisation (when not already chosen), date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The engagement choice lists only this organisation's engagements. The server repeats every check. Server checks: the organisation must exist (archived resolves to its replacement). If an engagement is given it must belong to the same organisation. Date is required, a valid date and not later than today. Type must be in Lists (Company) > Interaction Type. Logged By must be an active member. Summary is required. Follow-up Date, if given, is a valid date and not earlier than Date.",
+  "calculations": "Date defaults to today and Logged by to the person using the tool [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. After saving, the engagement page opens when the form was started from an engagement, otherwise the organisation page [CONFIRMED]. Server: Interaction ID is the highest existing number plus 1, written as INT- plus 4 digits, under a script lock [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. Created On is set on save [CONFIRMED]. Summary and Next Step keep their line breaks as typed [CONFIRMED].",
+  "dependencies": "Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members. Server: Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members.",
   "id": "F10"
  },
  {
@@ -1382,40 +1430,60 @@ const FEATURE_SPEC = [
   "status": "New",
   "screen": "Home > Follow-ups",
   "delta": "New home tab listing open follow-ups with an owner filter and a Done button on each.",
-  "validations": "Form: none; the owner filter is optional. Server: Server checks: the interaction must exist and must have a Follow-up Date. Saved by must be an active member.",
+  "validations": "Form: none; the owner filter is optional. Server checks: the interaction must exist and must have a Follow-up Date. Saved by must be an active member.",
   "calculations": "A follow-up is open when an interaction has a Follow-up Date and Follow-up Done is not Yes [CONFIRMED]. It is overdue when the date is before today [CONFIRMED]. The list shows overdue items first, then by date [CONFIRMED]. The owner of a follow-up is the owner of its engagement, or the person who logged it when there is no engagement [CONFIRMED]. The Owner filter starts as the person using the tool [CONFIRMED]. Done marks the follow-up as done and removes it from the list [CONFIRMED]. Server: Marking done sets Follow-up Done to Yes; un-marking clears it [CONFIRMED].",
   "dependencies": "Interactions; Engagements; Org Master (Orgs). Server: Interactions.",
   "id": "F11"
- },
- {
-  "feature": "Manage products",
-  "status": "New",
-  "screen": "Settings > Products",
-  "delta": "New screen to add products and to rename, describe, activate or deactivate them. Products are created here and never typed into the sheet.",
-  "validations": "Form: product name is required for a new product and when renaming. The server checks the name is up to 80 characters and unique ignoring case and spaces. Server: Server checks: Product Name is required, up to 80 characters, and unique ignoring case and spaces. Active must be Yes or No. Saved by must be an active member.",
-  "calculations": "Product ID is issued by the server [CONFIRMED]. New products are active [CONFIRMED]. An inactive product stays on old engagements but cannot be chosen for new ones [CONFIRMED]. Server: Product ID is the highest existing number plus 1, written as PRD- plus 3 digits, under a script lock [CONFIRMED]. New products are Active = Yes [CONFIRMED]. Making a product inactive keeps it on old engagements but removes it from the choice for new ones [CONFIRMED].",
-  "dependencies": "Products; F07 (only active products are offered). Server: Products; Engagements.",
-  "id": "F12"
  },
  {
   "feature": "Hand over engagements",
   "status": "New",
   "screen": "Settings > Hand over engagements",
   "delta": "New screen to move engagements from one owner to another in one save.",
-  "validations": "Form: a new owner and at least one ticked engagement are required. The new owner is chosen from active members other than the current owner. The server repeats the checks. Server: Server checks: at least one engagement must be chosen. The new owner must be an active member and different from the current owner. Every chosen engagement must currently be owned by the person named as the current owner. Saved by must be an active member.",
+  "validations": "Form: a new owner and at least one ticked engagement are required. The new owner is chosen from active members other than the current owner. The server repeats the checks. Server checks: at least one engagement must be chosen. The new owner must be an active member and different from the current owner. Every chosen engagement must currently be owned by the person named as the current owner. Saved by must be an active member.",
   "calculations": "The list shows every engagement owned by the chosen person; New and In progress engagements are ticked by default and Converted and Not interested are not [CONFIRMED]. Only Owner changes; stages and dates are untouched [CONFIRMED]. Server: Owner is changed on every chosen engagement in one save; other fields and Stage Changed On are not touched [CONFIRMED]. Which engagements are chosen is decided on the screen: New and In progress engagements of the selected person are ticked by default, Converted and Not interested are unticked [CONFIRMED].",
-  "dependencies": "Engagements; Members.",
+  "dependencies": "Engagements; Members. Server: Engagements; Members.",
   "id": "F13"
  },
  {
   "feature": "Import organisations",
   "status": "New",
   "screen": "Settings > Import organisations",
-  "delta": "New screen that checks organisations pasted into the Import tab of the team sheet and loads them into the Org Master. Organisations only; engagements and interactions are not imported.",
-  "validations": "Form: nothing can be loaded until the check has run. Rows with errors cannot be loaded. The server repeats the checks on each row when loading. Server: Server checks: each pasted row needs an Org Name (up to 120 characters) and an Org Type that is in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address. Rows that already show a Result are ignored. Loaded by must be an active member. A row that fails these checks is shown as an error and cannot be loaded.",
+  "delta": "New screen that checks organisations pasted into the Import tab of the company sheet and loads them into the Org Master. Organisations only; engagements and interactions are not imported.",
+  "validations": "Form: nothing can be loaded until the check has run. Rows with errors cannot be loaded. The server repeats the checks on each row when loading. Server checks: each pasted row needs an Org Name (up to 120 characters) and an Org Type that is in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address. Rows that already show a Result are ignored. Loaded by must be an active member. A row that fails these checks is shown as an error and cannot be loaded.",
   "calculations": "Each row is shown as ready, possible duplicate or error [CONFIRMED]. Ready rows are loaded; each possible duplicate is skipped unless the user chooses Load anyway [CONFIRMED]. The Load button counts ready rows plus duplicates set to load [CONFIRMED]. Loaded rows get a Result in the Import tab and are not offered again [CONFIRMED]. After loading, the tool reloads its data [CONFIRMED]. Server: A pasted row is marked possible duplicate when its name (ignoring case and spaces) or website domain matches an existing record, Active or Archived, or an earlier row in the same Import tab [CONFIRMED]. Rows marked ready are loaded; possible duplicates are loaded only if the user chooses to [CONFIRMED]. Org IDs are issued in sheet order as in Add organisation [CONFIRMED]. After loading, the Import tab's Result column shows Loaded as ORG-xxxx, or Skipped for duplicates the user skipped [CONFIRMED].",
-  "dependencies": "Import tab (team sheet); Org Master (Orgs, Lists, Config); Members; F01 (data reload). Server: Import tab (team sheet); Org Master (Orgs, Lists, Config); Members.",
+  "dependencies": "Import tab (company sheet); Org Master (Orgs, Lists, Config); Members; F01 (data reload). Server: Import tab (company sheet); Org Master (Orgs, Lists, Config); Members.",
   "id": "F14"
+ },
+ {
+  "feature": "Product list check",
+  "status": "New in v2",
+  "screen": "Home (notice at the top)",
+  "delta": "New notice on the Home screen when the Products tab of the company sheet has a problem. It lists each problem with the sheet row to fix. It does not block anything: the tool keeps working.",
+  "validations": "Form: none. The checks run on the server when the data loads (see the server note). Server checks: this check only warns and never blocks. Each Product ID is trimmed of leading and trailing spaces first, then checked. A warning is raised for a blank Product ID, a Product ID that does not follow PRD- plus 3 digits, a Product ID used on more than one row, and a Product Name used on more than one row (ignoring case and spaces).",
+  "calculations": "The notice is shown only when there is something to fix and disappears once the sheet is corrected and the data is refreshed [CONFIRMED]. Server: Warnings are worked out every time the data is loaded and returned with it, naming the sheet rows to fix [CONFIRMED]. Rows with no Product ID are left out of the product list because they cannot be used [CONFIRMED]. The trimmed Product ID is used for every match, so stray spaces typed in the sheet do not break an engagement [CONFIRMED]. The sheet itself is never rewritten by this check [CONFIRMED].",
+  "dependencies": "Products (company sheet); F17 (Refresh) to see a correction without reloading the page. Server: Products (company sheet).",
+  "id": "F15"
+ },
+ {
+  "feature": "Edit interaction",
+  "status": "New in v2",
+  "screen": "Organisation page > Interactions > Edit; Engagement page > Interactions > Edit",
+  "delta": "New Edit link on every interaction and a new form with the saved values. Date, how you were in touch, who you spoke with, who logged it, what happened, next step, follow-up date and the product it was about can all be changed. The organisation cannot be changed.",
+  "validations": "Form: date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The product choice lists only this organisation's engagements. The server repeats every check. Server checks: the interaction must exist. A changed Date must be valid and not later than today. A changed Type must be in Lists (Company) > Interaction Type. Summary is required. A changed Logged By must be an active member. A chosen engagement must belong to the same organisation. Follow-up Date, if given, is a valid date and not earlier than Date. Org ID cannot be changed. Saved by must be an active member.",
+  "calculations": "Clearing the follow-up date, or choosing a different follow-up date, makes the follow-up open again [UNVERIFIED — NEEDS CONFIRMATION]. After saving, the screen the person came from opens again with the changes [CONFIRMED]. Server: Only the fields sent are changed; Interaction ID, Org ID and Created On are never touched [CONFIRMED]. If the Follow-up Date is cleared, Follow-up Done is cleared with it [UNVERIFIED — NEEDS CONFIRMATION]. If the Follow-up Date is changed to a different date, Follow-up Done is cleared so the follow-up shows as open again [UNVERIFIED — NEEDS CONFIRMATION]. Next Step keeps its line breaks as typed [CONFIRMED].",
+  "dependencies": "Interactions; Engagements; Lists (Company): Interaction Type; Members; F10 (shared product picker helper f10_fillEng). Server: Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members.",
+  "id": "F16"
+ },
+ {
+  "feature": "Refresh",
+  "status": "New in v2",
+  "screen": "Header on Home, Organisation page and Engagement page",
+  "delta": "New refresh button in the header that fetches the latest data from the sheets without reloading the page. Filters, the open tab and the scroll position are kept. It is not shown on forms, so a half-filled form is never lost.",
+  "validations": "Form: none.",
+  "calculations": "Refresh fetches the same data as the first load and redraws the current screen [CONFIRMED]. If the fetch fails, a message appears and the data already on screen is kept [CONFIRMED]. The Settings > Reload link does the same and stays.",
+  "dependencies": "F01 (data load).",
+  "id": "F17"
  }
 ];
 REG.settingsItems.push({ group: 'Master data and reference', order: 3, label: 'Feature Spec', route: 'spec' });
@@ -1436,10 +1504,10 @@ REG.routes.spec = function () {
  * Delta: New start-up flow: the web app address (from the landing page link ?url=, or typed once), the team key, and the person using the tool. All three are remembered on the device. The page title, heading and main colour come from Config.
  * Validations: Form: the web app address must answer; the team key is required and is checked by the server on every request; the person must be chosen from active members.
  * Calculations: Remembered values are kept per web app address, so two workspaces opened from the same page do not mix [CONFIRMED]. Heading is Tool Title (default Relationships), the subtitle is Workspace Name, and the colour is Primary Colour with darker and softer shades worked out from it [CONFIRMED]. Today's date comes from the server in the Config timezone [CONFIRMED].
- * Dependencies: Config (Team): Team Key, Workspace Name, Tool Title, Primary Colour, Timezone; Members.
+ * Dependencies: Config (Company): Team Key, Workspace Name, Tool Title, Primary Colour, Timezone; Members.
  * @end */
 function applyData(d) {
-  S.cfg = d.config; S.members = d.members; S.lists = d.lists; S.products = d.products;
+  S.cfg = d.config; S.members = d.members; S.lists = d.lists; S.products = d.products; S.productWarnings = d.productWarnings || [];
   S.engagements = d.engagements; S.interactions = d.interactions; S.orgs = d.orgs;
   applyBrand(); reindex();
 }
