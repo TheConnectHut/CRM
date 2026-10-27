@@ -54,6 +54,7 @@
   .hdr-title { flex: 1; min-width: 0; padding-left: 4px; }
   .hdr-title .title { font-size: 16px; font-weight: 700; color: var(--primary-dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hdr-title .subtitle { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hdr-logo { height: 32px; width: auto; max-width: 96px; border-radius: 6px; flex-shrink: 0; }
   #hActions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
   /* ============ LAYOUT ============ */
@@ -237,6 +238,7 @@
 
 <header id="hdr">
   <button class="icon-btn" id="backBtn" aria-label="Back" hidden>&#8249;</button>
+  <img id="hLogo" class="hdr-logo" alt="" hidden>
   <div class="hdr-title"><div class="title" id="hTitle"></div><div class="subtitle" id="hSub"></div></div>
   <div id="hActions"></div>
 </header>
@@ -271,7 +273,7 @@ const S = {
   url: '', key: '', me: '', cfg: {}, members: [], products: [], productWarnings: [], engagements: [], interactions: [], orgs: [],
   lists: { stage: [], interactionType: [], orgType: [], source: [] }, idx: {}, ui: {}
 };
-const REG = { routes: {}, homeTabs: [], homeBanners: [], addMenu: [], orgSections: [], orgActions: [], settingsItems: [], acts: {} };
+const REG = { routes: {}, homeTabs: [], homeBanners: [], addMenu: [], orgSections: [], orgActions: [], settingsItems: [], deviceRows: [], hooks: { chrome: [], url: [] }, acts: {} };
 const STAGE_OPEN = ['New', 'In progress'];
 const STAGE_NI = 'Not interested';
 function activeOrgs() { return S.orgs.filter(o => o['Record Status'] !== 'Archived'); }
@@ -391,6 +393,7 @@ function setChrome(o) {
   $('#hSub').textContent = o.sub || '';
   $('#backBtn').hidden = !o.back;
   $('#hActions').innerHTML = o.actions || '';
+  REG.hooks.chrome.forEach(f => f(o));
 }
 function setBar(html) {
   const b = $('#bar');
@@ -635,7 +638,7 @@ REG.routes.settings = function () {
   show(Object.keys(groups).map(g => '<div class="card"><div class="card-title">' + esc(g) + '</div><div class="list" style="box-shadow:none;border:none;margin:0">'
     + groups[g].map(it => '<a class="row" href="#/' + escA(it.route) + '"><div class="row-title">' + esc(it.label) + '</div></a>').join('') + '</div></div>').join('')
     + '<div class="card"><div class="card-title">This device</div>'
-    + '<div class="row-top" style="margin-bottom:6px"><div>Using as <strong>' + esc(S.me) + '</strong></div><button class="link-btn" data-act="core.who">Change</button></div>'
+    + '<div class="row-top" style="margin-bottom:6px"><div>Using as <strong>' + esc(S.me) + '</strong></div><button class="link-btn" data-act="core.who">Change</button></div>' + REG.deviceRows.map(f => f()).join('')
     + '<div class="row-top"><div class="muted">Fetch the latest data</div><button class="link-btn" data-act="core.reload">Reload</button></div>'
     + '<div class="row-top"><div class="muted">Forget the team key on this device</div><button class="link-btn" data-act="core.forget">Disconnect</button></div></div>');
 };
@@ -644,20 +647,20 @@ REG.routes.settings = function () {
 /* ==== BEGIN F02 — Organisation search and filter ============================ */
 /* @spec F02
  * Feature: Organisation search and filter
- * Status: New
+ * Status: Modified in v4
  * Screen: Home > Organisations
- * Delta: New home tab. Search box, a Filters panel (type, city, tag, owner, stage) and a list of active organisations.
+ * Delta: Home tab from v1: search box, a Filters panel and a list of active organisations. In v4 a Person filter is added above the search box, set to the person using the tool, and the Owner filter in the Filters panel is replaced by it (type, city, tag and stage stay in the panel). Reuse the Engagements tab's owner filter pattern; the Person list is fresh logic.
  * Validations: Form: none; every filter is optional.
- * Calculations: Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Owner and Stage filters match organisations that have at least one engagement of this company meeting both [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the company's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].
- * Dependencies: Org Master (Orgs); Engagements; Products; F03 (row opens the organisation page).
+ * Calculations: Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Stage filter matches organisations that have at least one engagement of this company at that stage [CONFIRMED]. In v4 the Person filter matches an organisation when it was last updated by that person (the Last Updated By stamp, which is also set when the organisation is first added) or when that person owns one of this company's engagements with it [CONFIRMED]. The Person filter starts as the person using the tool, and All shows everyone [CONFIRMED]. The Person list holds this company's active members and engagement owners, plus anyone else seen in the stamps, shown as Name (Workspace Name) [CONFIRMED]. Person and Stage are checked separately, so they no longer have to be met by the same engagement [CONFIRMED]. When the Person filter leaves nothing, the empty message offers Show everyone [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the company's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].
+ * Dependencies: Org Master (Orgs): Last Updated By; Engagements: Owner; Config (Company): Workspace Name; Members; Products; F03 (row opens the organisation page).
  * @end */
-const F02 = { q: '', type: '', city: '', tag: '', owner: '', stage: '', open: false, shown: 60 };
+const F02 = { q: '', type: '', city: '', tag: '', person: null, stage: '', open: false, shown: 60 };
 REG.homeTabs.push({ id: 'orgs', label: 'Organisations', order: 1, render: f02_render });
 
 function f02_active() { return activeOrgs(); }
 function f02_tagsOf(o) { return String(o['Tags'] || '').split(',').map(t => t.trim()).filter(Boolean); }
 function f02_distinct(arr) { return Array.from(new Set(arr.filter(Boolean))).sort((a, b) => a.localeCompare(b)); }
-function f02_filterCount() { return ['type', 'city', 'tag', 'owner', 'stage'].filter(k => F02[k]).length; }
+function f02_filterCount() { return ['type', 'city', 'tag', 'person', 'stage'].filter(k => F02[k]).length; }
 function f02_match(o) {
   if (F02.q) {
     const hay = [o['Org Name'], o['City'], o['State'], o['Tags'], o['Contacts']].join(' ').toLowerCase();
@@ -666,11 +669,23 @@ function f02_match(o) {
   if (F02.type && o['Org Type'] !== F02.type) return false;
   if (F02.city && o['City'] !== F02.city) return false;
   if (F02.tag && f02_tagsOf(o).map(t => t.toLowerCase()).indexOf(F02.tag.toLowerCase()) < 0) return false;
-  if (F02.owner || F02.stage) {
-    const es = S.idx.engByOrg[o['Org ID']] || [];
-    if (!es.some(e => (!F02.owner || e['Owner'] === F02.owner) && (!F02.stage || e['Stage'] === F02.stage))) return false;
+  if (F02.stage && !(S.idx.engByOrg[o['Org ID']] || []).some(e => e['Stage'] === F02.stage)) return false;
+  if (F02.person) {
+    const p = f02_people().find(x => x.v === F02.person);
+    const stamped = o['Last Updated By'] === F02.person;
+    const owns = !!(p && p.own) && (S.idx.engByOrg[o['Org ID']] || []).some(e => e['Owner'] === p.own);
+    if (!stamped && !owns) return false;
   }
   return true;
+}
+// The people offered in the Person filter. v is the Name (Workspace Name) stamp; own is the plain name for this company's people.
+function f02_stamp(name) { return S.cfg.workspaceName ? name + ' (' + S.cfg.workspaceName + ')' : name; }
+function f02_people() {
+  const ownNames = f02_distinct(activeNames().concat(S.engagements.map(e => e['Owner'])));
+  const own = ownNames.map(n => ({ v: f02_stamp(n), l: n, own: n }));
+  const seen = {}; own.forEach(p => { seen[p.v] = 1; });
+  const others = f02_distinct(S.orgs.map(o => o['Last Updated By'])).filter(v => !seen[v]).map(v => ({ v: v, l: v, own: '' }));
+  return own.concat(others);
 }
 function f02_select(id, label, opts, val) {
   return '<div class="field"><label class="field-label">' + esc(label) + '</label><select id="' + id + '"><option value="">All</option>'
@@ -678,22 +693,25 @@ function f02_select(id, label, opts, val) {
 }
 function f02_render(host) {
   const orgs = f02_active();
-  const owners = f02_distinct(S.engagements.map(e => e['Owner']));
+  const people = f02_people();
+  if (F02.person === null) F02.person = f02_stamp(S.me);
   const tags = f02_distinct([].concat.apply([], orgs.map(f02_tagsOf)));
-  host.innerHTML = '<div class="searchrow"><input type="search" id="f02q" placeholder="Search name, city, tag, contact" value="' + escA(F02.q) + '">'
+  host.innerHTML = '<div class="filter-panel" style="grid-template-columns:1fr;margin-bottom:10px"><div class="field"><label class="field-label">Person</label><select id="f02person"><option value="">All</option>'
+    + people.map(p => '<option value="' + escA(p.v) + '"' + (p.v === F02.person ? ' selected' : '') + '>' + esc(p.l) + '</option>').join('') + '</select></div></div>'
+    + '<div class="searchrow"><input type="search" id="f02q" placeholder="Search name, city, tag, contact" value="' + escA(F02.q) + '">'
     + '<button class="btn btn-sm" id="f02fbtn">Filters' + (f02_filterCount() ? ' (' + f02_filterCount() + ')' : '') + '</button></div>'
     + '<div class="filter-panel" id="f02panel"' + (F02.open ? '' : ' hidden') + '>'
     + f02_select('f02type', 'Type', S.lists.orgType, F02.type) + f02_select('f02city', 'City', f02_distinct(orgs.map(o => o['City'])), F02.city)
-    + f02_select('f02tag', 'Tag', tags, F02.tag) + f02_select('f02owner', 'Owner', owners, F02.owner)
+    + f02_select('f02tag', 'Tag', tags, F02.tag)
     + f02_select('f02stage', 'Stage', S.lists.stage, F02.stage)
     + '<div class="wide"><button class="link-btn" id="f02clear">Clear filters</button></div></div>'
     + '<div class="count-line" id="f02count"></div><div id="f02list"></div>';
   $('#f02q').addEventListener('input', e => { F02.q = e.target.value; F02.shown = 60; f02_list(); });
   $('#f02fbtn').addEventListener('click', () => { F02.open = !F02.open; $('#f02panel').hidden = !F02.open; });
-  [['f02type', 'type'], ['f02city', 'city'], ['f02tag', 'tag'], ['f02owner', 'owner'], ['f02stage', 'stage']].forEach(p => {
+  [['f02person', 'person'], ['f02type', 'type'], ['f02city', 'city'], ['f02tag', 'tag'], ['f02stage', 'stage']].forEach(p => {
     $('#' + p[0]).addEventListener('change', e => { F02[p[1]] = e.target.value; F02.shown = 60; $('#f02fbtn').textContent = 'Filters' + (f02_filterCount() ? ' (' + f02_filterCount() + ')' : ''); f02_list(); });
   });
-  $('#f02clear').addEventListener('click', () => { ['type', 'city', 'tag', 'owner', 'stage'].forEach(k => { F02[k] = ''; }); f02_render(host); });
+  $('#f02clear').addEventListener('click', () => { ['type', 'city', 'tag', 'person', 'stage'].forEach(k => { F02[k] = ''; }); f02_render(host); });
   f02_list();
 }
 function f02_row(o) {
@@ -710,7 +728,9 @@ function f02_list() {
   if (!all.length) { $('#f02list').innerHTML = '<div class="empty">No organisations yet.' + (REG.routes['new-org'] ? '<br><a class="btn btn-primary" href="#/new-org">Add the first one</a>' : '') + '</div>'; return; }
   if (!m.length) {
     $('#f02list').innerHTML = '<div class="empty">Nothing matches' + (F02.q ? ' “' + esc(F02.q) + '”' : '') + '.'
+      + (F02.person ? '<br><button class="btn" id="f02everyone">Show everyone</button>' : '')
       + (REG.routes['new-org'] && F02.q ? '<br><a class="btn btn-primary" href="#/new-org/' + encodeURIComponent(F02.q) + '">Add “' + esc(F02.q) + '” as a new organisation</a>' : '') + '</div>';
+    const ev = $('#f02everyone'); if (ev) ev.addEventListener('click', () => { F02.person = ''; f02_render($('#tabBody')); });
     return;
   }
   $('#f02list').innerHTML = '<div class="list">' + m.slice(0, F02.shown).map(f02_row).join('') + '</div>'
@@ -1323,6 +1343,50 @@ REG.acts['f17.refresh'] = async el => {
 };
 /* ==== END F17 ================================================================ */
 
+
+/* ==== BEGIN F18 — Change web app address ================================= */
+/* @spec F18
+ * Feature: Change web app address
+ * Status: New in v3
+ * Screen: Settings > This device
+ * Delta: New row in Settings > This device that opens the web app address screen with the current address filled in, so a device can be pointed at another workspace without clearing anything.
+ * Validations: Form: the address is required and must answer, the same check as the first connection. Cancel leaves everything as it was.
+ * Calculations: After a new address is accepted, the device asks for that workspace's team key and name, which are remembered separately for each address [CONFIRMED]. The old workspace's key and name stay remembered, so changing back does not ask again [CONFIRMED].
+ * Dependencies: F01 (connection screens and per-address memory).
+ * @end */
+REG.deviceRows.push(() => '<div class="row-top" style="margin-bottom:6px"><div class="muted">Web app address</div><button class="link-btn" data-act="f18.change">Change</button></div>');
+REG.acts['f18.change'] = () => {
+  viewConnect();
+  const i = $('input[data-k="url"]'); if (i) i.value = S.url;
+  $('#view').insertAdjacentHTML('beforeend', '<div class="center"><button class="link-btn" data-act="f18.cancel">Cancel</button></div>');
+};
+REG.acts['f18.cancel'] = () => startRouting();
+/* ==== END F18 ================================================================ */
+
+/* ==== BEGIN F19 — Logo from the landing page ============================= */
+/* @spec F19
+ * Feature: Logo from the landing page
+ * Status: New in v3
+ * Screen: Header on Home
+ * Delta: New logo at the left of the header on the Home screen. The landing page passes the logo's address in the link (logo=…), and the tool remembers it on the device for that workspace.
+ * Validations: Form: none. Only a full web address starting with http:// or https:// is accepted as a logo.
+ * Calculations: The logo is taken from the link only when the link's own web app address is the one in use, so a typed-in address never picks up another workspace's logo [CONFIRMED]. If the logo cannot be loaded, the header shows text only and nothing else is affected [CONFIRMED]. The logo shows on Home only, not on inner pages where the Back button sits [CONFIRMED].
+ * Dependencies: F01 (web app address and per-address memory); the landing page (supplies the logo address).
+ * @end */
+function logoSync(o) {
+  const img = $('#hLogo'); if (!img) return;
+  if (S.logo && img.getAttribute('src') !== S.logo) img.setAttribute('src', S.logo);
+  img.hidden = !S.logo || !!(o && o.back);
+}
+REG.hooks.url.push(() => {
+  const p = new URLSearchParams(location.search), lg = p.get('logo') || '';
+  if (/^https?:\/\//i.test(lg) && p.get('url') === S.url) store.set('logo', lg);
+  S.logo = store.get('logo') || '';
+});
+REG.hooks.chrome.push(logoSync);
+(function () { const img = $('#hLogo'); if (img) img.addEventListener('error', () => { S.logo = ''; img.hidden = true; }); })();
+/* ==== END F19 ================================================================ */
+
 /* ==== Feature Spec view (generated from the spec tags at build time) ========= */
 const FEATURE_SPEC = [
  {
@@ -1337,12 +1401,12 @@ const FEATURE_SPEC = [
  },
  {
   "feature": "Organisation search and filter",
-  "status": "New",
+  "status": "Modified in v4",
   "screen": "Home > Organisations",
-  "delta": "New home tab. Search box, a Filters panel (type, city, tag, owner, stage) and a list of active organisations.",
+  "delta": "Home tab from v1: search box, a Filters panel and a list of active organisations. In v4 a Person filter is added above the search box, set to the person using the tool, and the Owner filter in the Filters panel is replaced by it (type, city, tag and stage stay in the panel). Reuse the Engagements tab's owner filter pattern; the Person list is fresh logic.",
   "validations": "Form: none; every filter is optional.",
-  "calculations": "Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Owner and Stage filters match organisations that have at least one engagement of this company meeting both [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the company's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].",
-  "dependencies": "Org Master (Orgs); Engagements; Products; F03 (row opens the organisation page).",
+  "calculations": "Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Stage filter matches organisations that have at least one engagement of this company at that stage [CONFIRMED]. In v4 the Person filter matches an organisation when it was last updated by that person (the Last Updated By stamp, which is also set when the organisation is first added) or when that person owns one of this company's engagements with it [CONFIRMED]. The Person filter starts as the person using the tool, and All shows everyone [CONFIRMED]. The Person list holds this company's active members and engagement owners, plus anyone else seen in the stamps, shown as Name (Workspace Name) [CONFIRMED]. Person and Stage are checked separately, so they no longer have to be met by the same engagement [CONFIRMED]. When the Person filter leaves nothing, the empty message offers Show everyone [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the company's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].",
+  "dependencies": "Org Master (Orgs): Last Updated By; Engagements: Owner; Config (Company): Workspace Name; Members; Products; F03 (row opens the organisation page).",
   "id": "F02"
  },
  {
@@ -1484,6 +1548,26 @@ const FEATURE_SPEC = [
   "calculations": "Refresh fetches the same data as the first load and redraws the current screen [CONFIRMED]. If the fetch fails, a message appears and the data already on screen is kept [CONFIRMED]. The Settings > Reload link does the same and stays.",
   "dependencies": "F01 (data load).",
   "id": "F17"
+ },
+ {
+  "feature": "Change web app address",
+  "status": "New in v3",
+  "screen": "Settings > This device",
+  "delta": "New row in Settings > This device that opens the web app address screen with the current address filled in, so a device can be pointed at another workspace without clearing anything.",
+  "validations": "Form: the address is required and must answer, the same check as the first connection. Cancel leaves everything as it was.",
+  "calculations": "After a new address is accepted, the device asks for that workspace's team key and name, which are remembered separately for each address [CONFIRMED]. The old workspace's key and name stay remembered, so changing back does not ask again [CONFIRMED].",
+  "dependencies": "F01 (connection screens and per-address memory).",
+  "id": "F18"
+ },
+ {
+  "feature": "Logo from the landing page",
+  "status": "New in v3",
+  "screen": "Header on Home",
+  "delta": "New logo at the left of the header on the Home screen. The landing page passes the logo's address in the link (logo=…), and the tool remembers it on the device for that workspace.",
+  "validations": "Form: none. Only a full web address starting with http:// or https:// is accepted as a logo.",
+  "calculations": "The logo is taken from the link only when the link's own web app address is the one in use, so a typed-in address never picks up another workspace's logo [CONFIRMED]. If the logo cannot be loaded, the header shows text only and nothing else is affected [CONFIRMED]. The logo shows on Home only, not on inner pages where the Back button sits [CONFIRMED].",
+  "dependencies": "F01 (web app address and per-address memory); the landing page (supplies the logo address).",
+  "id": "F19"
  }
 ];
 REG.settingsItems.push({ group: 'Master data and reference', order: 3, label: 'Feature Spec', route: 'spec' });
@@ -1568,6 +1652,7 @@ function startRouting() {
 function useUrl(url) {
   NS = 'crm.'; store.set('lastUrl', url);
   S.url = url; NS = 'crm.' + hashStr(url) + '.';
+  REG.hooks.url.forEach(f => f());
 }
 function begin() {
   S.key = store.get('key') || '';
