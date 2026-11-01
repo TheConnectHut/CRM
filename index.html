@@ -1,975 +1,1786 @@
-/**
- * CRM Backend — Apps Script Web App (generic relationship tool)
- *
- * Lives inside a COMPANY sheet (tabs: Config, Members, Lists, Products,
- * Campaigns, Engagements, Interactions, Stage History, Import) and reads / writes
- * the shared ORG MASTER sheet (tabs: Orgs, Lists, Config) by the Master Sheet
- * ID in Config. The same script is used, unchanged, in every company's sheet.
- * Products and Campaigns are typed directly in the company sheet; this script
- * only reads them.
- *
- * SETUP:
- * 1. In the company sheet: Extensions > Apps Script, delete the starter code,
- *    paste this whole file in.
- * 2. Deploy > New deployment > Web app
- *      Execute as: Me      Who has access: Anyone
- *    (the person deploying needs Edit access to the Org Master sheet)
- * 3. Copy the Web App URL; put it in the landing page link as ?url=<URL>
- * 4. After every code change: Deploy > Manage deployments > edit > New version.
- *
- * Every request must carry a key from the Config tab: the Team Key opens the
- * CRM; the Insights Team Key opens only the read-only Insights view.
- * Responses are always JSON: { ok: true, data } or { ok: false, error }.
- * Writes use a script lock. Dates are stored as plain yyyy-MM-dd text and
- * timestamps as yyyy-MM-dd HH:mm, in the timezone set in Config.
- *
- * Each feature below sits in its own block, headed by a spec tag
- * (@spec ... @end). The tags are read by the build step that generates the
- * Feature Spec view in crm_v5.html, so the table and the code cannot drift.
- *
- * v3 changes (data model v7): stages are read from Lists > Stage with a Stage
- * Kind (Open, Won, Lost) beside each, and no stage name is written in this
- * script. New: F20 stage list check, F21 campaigns on engagements, F22 Stage
- * History log, F23 Insights read action. Modified: F07, F08, F13.
- * The feature number F12 is retired and not reused.
- */
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relationships</title>
+<style>
+  /* ============ DESIGN TOKENS (from ankahee-design-tokens.css) ============ */
+  :root {
+    --bg: #FAF6F2;
+    --surface: #FFFFFF;
+    --surface-soft: #F3EEE8;
+    --primary: #5B4B7C;
+    --primary-dark: #443A5E;
+    --primary-soft: #EDE8F3;
+    --success: #4F8A6D;
+    --success-soft: #E7F1EB;
+    --risk: #B8524A;
+    --risk-soft: #F7E9E7;
+    --text: #2E2A33;
+    --text-muted: #7A7480;
+    --border: #E4DDD6;
+    --radius: 14px;
+    --radius-sm: 10px;
+    --shadow: 0 2px 10px rgba(46, 42, 51, 0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--primary); }
+  [hidden] { display: none !important; }
 
-var CRM_VERSION = 'crm.gs v3';
-var DEFAULT_TZ = 'Asia/Kolkata';
-var CUR_TZ_ = DEFAULT_TZ;
-var STAGE_KINDS_ = ['Open', 'Won', 'Lost'];
-var ORG_TEXT_FIELDS = ['Org Name', 'Org Type', 'City', 'State', 'Website', 'Source', 'Tags', 'About', 'Contacts'];
-var TIMESTAMP_HEADERS_ = { 'Created On': 1, 'Last Updated On': 1, 'Changed On': 1 };
+  /* ============ HEADER ============ */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 10px 12px; display: flex; align-items: center; gap: 8px; min-height: 58px;
+  }
+  .icon-btn {
+    width: 44px; height: 44px; border: none; background: none; border-radius: 999px;
+    font-size: 28px; line-height: 1; color: var(--primary); cursor: pointer; flex-shrink: 0;
+  }
+  .icon-btn:active { background: var(--primary-soft); }
+  .icon-btn.refresh { font-size: 24px; }
+  .icon-btn.spin { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hdr-title { flex: 1; min-width: 0; padding-left: 4px; }
+  .hdr-title .title { font-size: 16px; font-weight: 700; color: var(--primary-dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hdr-title .subtitle { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hdr-logo { height: 32px; width: auto; max-width: 96px; border-radius: 6px; flex-shrink: 0; }
+  #hActions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
-// ====================================================================
-// CORE: dispatcher, key check, sheet helpers (shared by every feature)
-// ====================================================================
+  /* ============ LAYOUT ============ */
+  main { max-width: 720px; margin: 0 auto; padding: 16px 16px 120px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 18px; margin-bottom: 14px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--primary-dark); margin: 0 0 10px 0; display: flex; justify-content: space-between; align-items: center;
+  }
+  .card-title .link-btn { text-transform: none; letter-spacing: 0; font-size: 14px; }
+  .muted { color: var(--text-muted); }
+  .small { font-size: 13px; }
+  .center { text-align: center; }
+  .loading-note, .empty { text-align: center; padding: 36px 16px; color: var(--text-muted); font-size: 15px; }
+  .empty .btn { margin-top: 12px; }
 
-var ACTIONS = {};
-function defAction_(name, isWrite, fn, opts) { ACTIONS[name] = { write: isWrite, fn: fn, insights: !!(opts && opts.insights) }; }
+  /* ============ BUTTONS ============ */
+  .btn {
+    min-height: 44px; padding: 10px 18px; border-radius: var(--radius-sm); border: 1.5px solid var(--primary);
+    background: var(--surface); color: var(--primary); font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit;
+    display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
+  }
+  .btn:active { background: var(--primary-soft); }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:active { background: var(--primary-dark); }
+  .btn-sm { min-height: 44px; padding: 8px 14px; font-size: 14px; border-radius: 999px; }
+  .btn:disabled { opacity: 0.5; }
+  .link-btn { background: none; border: none; color: var(--primary); font-weight: 600; font-size: 15px; cursor: pointer; padding: 10px 4px; min-height: 44px; font-family: inherit; text-decoration: underline; text-underline-offset: 3px; }
 
-function doGet(e) { return handle_(e && e.parameter ? e.parameter : {}); }
+  /* ============ BOTTOM BAR ============ */
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--surface);
+    border-top: 1px solid var(--border); padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .bar-inner { max-width: 720px; margin: 0 auto; display: flex; gap: 10px; }
+  .bar-inner .btn { flex: 1; min-height: 50px; font-size: 16px; font-weight: 700; }
+  .bar-error { max-width: 720px; margin: 0 auto 8px; font-size: 13px; color: var(--risk); text-align: center; display: none; }
 
-function doPost(e) {
-  var p;
-  try { p = JSON.parse(e.postData.contents); }
-  catch (err) { return out_({ ok: false, error: 'The request could not be read.' }); }
-  return handle_(p);
+  /* ============ TABS, SEARCH, FILTERS ============ */
+  .identity-bar {
+    display: flex; align-items: center; justify-content: space-between; background: var(--primary-soft);
+    border-radius: var(--radius-sm); padding: 4px 6px 4px 14px; margin-bottom: 14px; font-size: 14px;
+  }
+  .identity-bar strong { color: var(--primary-dark); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; overflow-x: auto; }
+  .tab {
+    padding: 10px 16px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--surface);
+    font-size: 14px; font-weight: 600; color: var(--text); cursor: pointer; min-height: 44px; white-space: nowrap; font-family: inherit;
+  }
+  .tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .searchrow { display: flex; gap: 8px; margin-bottom: 10px; }
+  .searchrow input { flex: 1; }
+  .filter-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .filter-panel .field { margin: 0; }
+  .filter-panel .wide { grid-column: 1 / -1; text-align: right; }
+  .count-line { font-size: 13px; color: var(--text-muted); margin: 4px 2px 10px; }
+
+  /* ============ LIST ROWS ============ */
+  .list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 14px; }
+  .row { display: block; padding: 14px 16px; border-bottom: 1px solid var(--border); text-decoration: none; color: inherit; min-height: 44px; }
+  .row:last-child { border-bottom: none; }
+  a.row:active { background: var(--primary-soft); }
+  .row-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  .row-title { font-weight: 600; font-size: 16px; color: var(--text); }
+  .row-sub { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+  .row-tags { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* ============ BADGES ============ */
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: var(--surface-soft); color: var(--text); white-space: nowrap;
+  }
+  .st-new { background: var(--primary-soft); color: var(--primary-dark); }
+  .st-prog { background: var(--primary); color: #fff; }
+  .st-conv { background: var(--success-soft); color: var(--success); }
+  .st-ni { background: var(--surface-soft); color: var(--text-muted); }
+  .cold { background: var(--risk-soft); color: var(--risk); }
+  .tag { background: var(--primary-soft); color: var(--primary-dark); }
+
+  /* ============ ORGANISATION PAGE ============ */
+  .org-name { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .contact { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .contact:last-child { border-bottom: none; padding-bottom: 0; }
+  .contact:first-child { padding-top: 0; }
+  .c-name { font-weight: 600; }
+  .c-role { font-size: 13px; color: var(--text-muted); }
+  .c-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 2px; }
+  .c-links a { display: inline-flex; align-items: center; min-height: 44px; font-size: 15px; }
+  .about-text, .pre { white-space: pre-wrap; }
+  .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 14px; }
+  .kv dt { color: var(--text-muted); } .kv dd { margin: 0; }
+  .int { padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .int:last-child { border-bottom: none; padding-bottom: 0; }
+  .int:first-child { padding-top: 0; }
+  .int-top { font-size: 13px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .int-top b { color: var(--text); }
+  .int-edit { margin: -12px -4px -12px 0; flex-shrink: 0; font-size: 14px; }
+  .int-sum { margin-top: 3px; white-space: pre-wrap; }
+  .int-next { margin-top: 4px; font-size: 14px; white-space: pre-wrap; }
+  .overdue { color: var(--risk); font-weight: 600; }
+  .meta { font-size: 13px; color: var(--text-muted); }
+  .meta-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; }
+  .banner { background: var(--risk-soft); border: 1px solid #E9C9C5; border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px; font-size: 14px; }
+  .banner.soft { background: var(--primary-soft); border-color: var(--border); }
+  .banner ul { margin: 6px 0 0; padding-left: 18px; }
+
+  /* ============ FORMS ============ */
+  .field { margin-bottom: 18px; }
+  .field:last-child { margin-bottom: 0; }
+  .field-label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .field-label .optional { font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: 4px; }
+  select, input[type="text"], input[type="date"], input[type="search"], input[type="url"] {
+    width: 100%; padding: 12px 14px; border-radius: var(--radius-sm); border: 1.5px solid var(--border);
+    font-size: 16px; background: var(--surface); color: var(--text); min-height: 46px; font-family: inherit;
+  }
+  textarea {
+    width: 100%; padding: 12px 14px; border-radius: var(--radius-sm); border: 1.5px solid var(--border);
+    font-size: 16px; font-family: inherit; min-height: 80px; resize: vertical; background: var(--surface); color: var(--text);
+  }
+  select:focus, input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    padding: 10px 16px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--surface);
+    font-size: 14px; color: var(--text); cursor: pointer; min-height: 44px; display: flex; align-items: center;
+    user-select: none; font-family: inherit;
+  }
+  .chip:active { transform: scale(0.97); }
+  .chip.selected { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+  .chips[data-multi] .chip.selected::before { content: "✓"; margin-right: 6px; font-weight: 700; }
+  .chip.disabled { opacity: 0.45; cursor: default; text-decoration: line-through; }
+  .field.flash { outline: 2px solid var(--risk); border-radius: 10px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .check-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; min-height: 44px; border-bottom: 1px solid var(--border); }
+  .check-row:last-child { border-bottom: none; }
+  .check-row input { width: 24px; height: 24px; accent-color: var(--primary); flex-shrink: 0; }
+  .check-row .grow { flex: 1; min-width: 0; }
+  .dupbox { background: var(--primary-soft); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+  .dupbox a.row { background: var(--surface); border-radius: var(--radius-sm); border: 1px solid var(--border); margin-bottom: 8px; }
+  .dupbox .btns { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+
+  .combo { position: relative; }
+  .combo-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; max-height: 240px; overflow-y: auto; background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); z-index: 25; }
+  .combo-item { padding: 10px 14px; min-height: 44px; cursor: pointer; display: flex; flex-direction: column; justify-content: center; }
+  .combo-item:active, .combo-item:hover { background: var(--primary-soft); }
+  .combo-item .s { font-size: 12px; color: var(--text-muted); }
+  .combo-empty { padding: 12px 14px; color: var(--text-muted); font-size: 14px; }
+
+  /* ============ SHEET, TOAST, CONFIRM ============ */
+  .sheet-back { position: fixed; inset: 0; background: rgba(46, 42, 51, 0.35); z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+  .sheet { background: var(--surface); width: 100%; max-width: 720px; border-radius: var(--radius) var(--radius) 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+  .sheet .btn { width: 100%; margin-bottom: 10px; }
+  .sheet .btn:last-child { margin-bottom: 0; }
+  .toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); background: var(--primary-dark); color: #fff; padding: 12px 18px; border-radius: 999px; font-size: 14px; z-index: 90; max-width: 90%; box-shadow: var(--shadow); }
+  .confirm-overlay { position: fixed; inset: 0; background: rgba(46, 42, 51, 0.35); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+  .confirm-overlay.show { display: flex; }
+  .confirm-card { background: var(--surface); border-radius: var(--radius); padding: 32px 28px; text-align: center; max-width: 320px; box-shadow: 0 8px 30px rgba(46,42,51,0.15); }
+  .confirm-check { width: 56px; height: 56px; border-radius: 50%; background: var(--success-soft); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; }
+  .confirm-check svg { width: 28px; height: 28px; }
+  .confirm-check circle { stroke: var(--success); stroke-width: 2; fill: none; stroke-dasharray: 63; stroke-dashoffset: 63; animation: circleDraw 0.5s ease forwards; }
+  .confirm-check path { stroke: var(--success); stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 20; stroke-dashoffset: 20; animation: checkDraw 0.3s ease forwards 0.45s; }
+  @keyframes circleDraw { to { stroke-dashoffset: 0; } }
+  @keyframes checkDraw { to { stroke-dashoffset: 0; } }
+  .confirm-title { font-size: 17px; font-weight: 700; margin: 0 0 6px; }
+  .confirm-sub { font-size: 14px; color: var(--text-muted); margin: 0; }
+
+  /* ============ FEATURE SPEC TABLE ============ */
+  .spec-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  table.spec { border-collapse: collapse; min-width: 1100px; font-size: 13px; }
+  table.spec th { text-align: left; background: var(--primary-soft); color: var(--primary-dark); padding: 10px; position: sticky; top: 0; }
+  table.spec td { vertical-align: top; padding: 10px; border-top: 1px solid var(--border); }
+  .spec-view main, body.spec-view main { max-width: none; }
+
+  @media (prefers-reduced-motion: reduce) { .confirm-check circle, .confirm-check path { animation: none; stroke-dashoffset: 0; } .icon-btn.spin { animation: none; } }
+</style>
+</head>
+<body>
+
+<header id="hdr">
+  <button class="icon-btn" id="backBtn" aria-label="Back" hidden>&#8249;</button>
+  <img id="hLogo" class="hdr-logo" alt="" hidden>
+  <div class="hdr-title"><div class="title" id="hTitle"></div><div class="subtitle" id="hSub"></div></div>
+  <div id="hActions"></div>
+</header>
+<main id="view"><div class="loading-note">Loading…</div></main>
+<div class="bar" id="bar" hidden></div>
+<div id="sheetHost"></div>
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-card">
+    <div class="confirm-check"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M7 12.5l3 3 7-7"></path></svg></div>
+    <p class="confirm-title" id="confirmTitle"></p>
+    <p class="confirm-sub" id="confirmSub"></p>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ====================================================================
+   CRM front end — generic relationship tool (one HTML file), v6
+
+   Structure:
+     CORE            state, API, data index, router, UI and form helpers
+     FEATURE BLOCKS  F02 … F21, each between BEGIN/END markers and headed by
+                     a spec tag. A feature registers itself into REG (routes,
+                     home tabs, menus, org-page sections); deleting its block
+                     removes the feature and leaves the rest working.
+     F01             connect / identify / start-up (last, because it runs)
+   The Feature Spec view is generated from the spec tags at build time
+   (build_crm.py merges the tags in this file with those in crm_v3.gs).
+   F12 (Manage products) was removed in v2 and its number is not reused.
+   v5: stage names are never written in this file. They come from
+   Lists > Stage with a Stage Kind (Open, Won, Lost) beside each; only
+   those three words are fixed.
+   ==================================================================== */
+
+const S = {
+  url: '', key: '', me: '', cfg: {}, members: [], products: [], productWarnings: [], stageWarnings: [], campaigns: [], engagements: [], interactions: [], orgs: [],
+  lists: { stage: [], stageKind: {}, interactionType: [], orgType: [], source: [] }, idx: {}, ui: {}
+};
+const REG = { routes: {}, homeTabs: [], homeBanners: [], addMenu: [], orgSections: [], orgActions: [], settingsItems: [], deviceRows: [], hooks: { chrome: [], url: [] }, acts: {} };
+function activeOrgs() { return S.orgs.filter(o => o['Record Status'] !== 'Archived'); }
+
+/* ---------- stages: names and kinds come from the Lists tab ---------- */
+function kindOf(st) { return (S.lists.stageKind || {})[st] || ''; }
+function isOpen(st) { return kindOf(st) === 'Open'; }
+function isWon(st) { return kindOf(st) === 'Won'; }
+function isLost(st) { return kindOf(st) === 'Lost'; }
+function firstStage() { return S.lists.stage[0] || ''; }
+
+/* ---------- small utilities ---------- */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+const escA = esc;
+function isYes(v) { return String(v || '').trim().toLowerCase() === 'yes'; }
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); }
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function parseD(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ''); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN; }
+function daysBetween(a, b) { return Math.round((parseD(b) - parseD(a)) / 86400000); }
+function fmtD(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ''); return m ? (+m[3]) + ' ' + MON[+m[2] - 1] + ' ' + m[1] : ''; }
+function todayStr() { return S.cfg.today || ''; }
+function agoText(d) {
+  const n = daysBetween(d, todayStr());
+  if (isNaN(n)) return '';
+  return n === 0 ? 'today' : n === 1 ? 'yesterday' : n < 0 ? 'in ' + plural(-n, 'day') : plural(n, 'day') + ' ago';
 }
 
-function handle_(p) {
-  var lock = null;
+/* ---------- per-device storage (never required to work) ---------- */
+const mem = {};
+let NS = 'crm.';
+const store = {
+  get(k) { try { return localStorage.getItem(NS + k); } catch (e) { return mem[NS + k] || null; } },
+  set(k, v) { try { localStorage.setItem(NS + k, v); } catch (e) { mem[NS + k] = v; } },
+  del(k) { try { localStorage.removeItem(NS + k); } catch (e) { delete mem[NS + k]; } }
+};
+
+/* ---------- API ---------- */
+async function api(action, payload, isWrite) {
+  const body = Object.assign({ action: action, key: S.key }, payload || {});
+  let res;
   try {
-    if (p.action === 'ping') return out_({ ok: true, data: { version: CRM_VERSION } });
-    var ctx = makeCtx_();
-    var a = ACTIONS[p.action];
-    checkKey_(ctx, p.key, a);
-    if (!a) fail_('Unknown action.');
-    if (a.write) {
-      lock = LockService.getScriptLock();
-      try { lock.waitLock(25000); } catch (le) { fail_('Someone else is saving right now. Please try again in a moment.'); }
+    if (isWrite) {
+      res = await fetch(S.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+    } else {
+      const q = Object.keys(body).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(body[k])).join('&');
+      res = await fetch(S.url + (S.url.indexOf('?') >= 0 ? '&' : '?') + q);
     }
-    return out_({ ok: true, data: a.fn(ctx, p) });
-  } catch (err) {
-    return out_({ ok: false, error: err && err.message ? err.message : String(err) });
-  } finally {
-    if (lock) lock.releaseLock();
+  } catch (e) {
+    throw new Error("Couldn't reach the tool. Check the connection and try again.");
   }
+  let json;
+  try { json = await res.json(); } catch (e) { throw new Error('The tool sent back something unexpected. Check the web app address.'); }
+  if (!json.ok) throw new Error(json.error || 'Something went wrong.');
+  return json.data;
 }
 
-function out_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+/* ---------- data, index, derived values ---------- */
+function upsert(list, keyName, obj) {
+  const i = list.findIndex(x => x[keyName] === obj[keyName]);
+  if (i >= 0) list[i] = obj; else list.push(obj);
 }
-function fail_(msg) { throw new Error(msg); }
-
-function makeCtx_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var cfg = readKeyValue_(sheet_(ss, 'Config'));
-  CUR_TZ_ = cfg['Timezone'] || DEFAULT_TZ;
-  return { ss: ss, cfg: cfg, tz: CUR_TZ_, master: null };
-}
-function masterSS_(ctx) {
-  if (!ctx.master) {
-    var id = ctx.cfg['Master Sheet ID'];
-    if (!id) fail_('Master Sheet ID is not set in the Config tab.');
-    ctx.master = SpreadsheetApp.openById(id);
+function activeNames() { return S.members.filter(m => isYes(m['Active'])).map(m => m['Name']).sort((a, b) => a.localeCompare(b)); }
+function resolveOrgId(id) {
+  for (let hop = 0; hop < 6; hop++) {
+    const o = S.idx.org[id];
+    if (!o) return id;
+    if (o['Record Status'] === 'Archived' && o['Archived To']) id = o['Archived To']; else return id;
   }
-  return ctx.master;
-}
-// The Team Key opens everything. The Insights Team Key opens only actions
-// marked insights and read-only (see F23).
-function checkKey_(ctx, key, action) {
-  var real = String(ctx.cfg['Team Key'] || '');
-  var ins = String(ctx.cfg['Insights Team Key'] || '');
-  var given = String(key || '');
-  if (!real) fail_('Team Key is not set in the Config tab.');
-  if (given === real) return;
-  if (ins && given === ins) {
-    if (action && action.insights && !action.write) return;
-    fail_('That key can only be used to view Insights.');
-  }
-  fail_('That team key was not recognised.');
-}
-function sheet_(ss, name) {
-  var s = ss.getSheetByName(name);
-  if (!s) fail_('Tab not found: ' + name);
-  return s;
-}
-
-function readKeyValue_(sheet) {
-  var v = sheet.getDataRange().getValues();
-  var out = {};
-  for (var r = 1; r < v.length; r++) {
-    var k = String(v[r][0] === undefined ? '' : v[r][0]).trim();
-    if (k) out[k] = v[r][1] === undefined || v[r][1] === null ? '' : String(v[r][1]).trim();
-  }
-  return out;
-}
-
-function cellStr_(v, header) {
-  if (v === null || v === undefined) return '';
-  if (Object.prototype.toString.call(v) === '[object Date]') {
-    return Utilities.formatDate(v, CUR_TZ_, TIMESTAMP_HEADERS_[header] ? 'yyyy-MM-dd HH:mm' : 'yyyy-MM-dd');
-  }
-  return String(v).trim() === '' ? '' : String(v);
-}
-
-function readTable_(sheet) {
-  var values = sheet.getDataRange().getValues();
-  var headers = (values[0] || []).map(function (h) { return String(h).trim(); });
-  var rows = [];
-  for (var r = 1; r < values.length; r++) {
-    var o = { _row: r + 1 }, any = false;
-    for (var c = 0; c < headers.length; c++) {
-      if (!headers[c]) continue;
-      var s = cellStr_(values[r][c], headers[c]);
-      if (s !== '') any = true;
-      o[headers[c]] = s;
-    }
-    if (any) rows.push(o);
-  }
-  return { sheet: sheet, headers: headers, rows: rows };
-}
-
-function readColumnsAsLists_(sheet) {
-  var data = sheet.getDataRange().getValues();
-  var out = {};
-  for (var c = 0; c < (data[0] || []).length; c++) {
-    var h = String(data[0][c]).trim();
-    if (!h) continue;
-    out[h] = [];
-    for (var r = 1; r < data.length; r++) {
-      var cell = data[r][c];
-      if (cell !== '' && cell !== null && cell !== undefined) out[h].push(String(cell).trim());
-    }
-  }
-  return out;
-}
-
-// Appends rows built from objects, matching columns by header name.
-function appendObjs_(t, objs) {
-  if (!objs.length) return;
-  var start = t.sheet.getLastRow() + 1;
-  var grid = objs.map(function (o) {
-    return t.headers.map(function (h) { var v = o[h]; return v === undefined || v === null ? '' : String(v); });
-  });
-  var rng = t.sheet.getRange(start, 1, grid.length, t.headers.length);
-  rng.setNumberFormat('@');
-  rng.setValues(grid);
-  objs.forEach(function (o, i) { o._row = start + i; t.rows.push(o); });
-}
-
-// Updates only the named columns of one row.
-function writeRow_(t, rowNum, patch) {
-  t.headers.forEach(function (h, i) {
-    if (h && Object.prototype.hasOwnProperty.call(patch, h)) {
-      var cell = t.sheet.getRange(rowNum, i + 1);
-      cell.setNumberFormat('@');
-      cell.setValue(patch[h] === null || patch[h] === undefined ? '' : String(patch[h]));
-    }
-  });
-}
-
-function pub_(o) {
-  var c = {};
-  Object.keys(o).forEach(function (k) { if (k.charAt(0) !== '_') c[k] = o[k]; });
-  return c;
-}
-function str_(v) { return v === undefined || v === null ? '' : String(v).trim(); }
-function pad_(n, w) { var s = String(n); while (s.length < w) s = '0' + s; return s; }
-function maxIdNum_(rows, key, prefix) {
-  var re = new RegExp('^' + prefix + '-(\\d+)$'), m = 0;
-  rows.forEach(function (r) { var x = re.exec(r[key] || ''); if (x) m = Math.max(m, parseInt(x[1], 10)); });
-  return m;
-}
-function nextIds_(rows, key, prefix, width, n) {
-  var start = maxIdNum_(rows, key, prefix) + 1, ids = [];
-  for (var i = 0; i < n; i++) ids.push(prefix + '-' + pad_(start + i, width));
-  return ids;
-}
-function today_(ctx) { return Utilities.formatDate(new Date(), ctx.tz, 'yyyy-MM-dd'); }
-function now_(ctx) { return Utilities.formatDate(new Date(), ctx.tz, 'yyyy-MM-dd HH:mm'); }
-
-function isDate_(s) {
-  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
-  if (!m) return false;
-  var y = +m[1], mo = +m[2], d = +m[3];
-  var dim = [31, (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1];
-  return mo >= 1 && mo <= 12 && d >= 1 && d <= dim;
-}
-function cleanDate_(s, label, required) {
-  s = str_(s);
-  if (!s) { if (required) fail_('Please enter ' + label + '.'); return ''; }
-  if (!isDate_(s)) fail_(label.charAt(0).toUpperCase() + label.slice(1) + ' should be a valid date.');
-  return s;
-}
-function cleanUrl_(s, label) {
-  s = str_(s);
-  if (!s) return '';
-  if (/\s/.test(s)) fail_(label + ' should be a single web address.');
-  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
-  if (!/^https?:\/\/[^\/]+\.[^\/]+/i.test(s)) fail_(label + ' should look like https://example.org');
-  return s;
-}
-function domainOf_(url) {
-  var m = /^https?:\/\/([^\/?#]+)/i.exec(str_(url));
-  return m ? m[1].toLowerCase().replace(/^www\./, '') : '';
-}
-function nameKey_(s) { return str_(s).toLowerCase().replace(/\s+/g, ''); }
-
-// Stage names and kinds are read row by row from Lists, so a stage and its
-// Stage Kind always stay on the same row (blank cells never shift them).
-function normKind_(v) {
-  var s = str_(v).toLowerCase();
-  for (var i = 0; i < STAGE_KINDS_.length; i++) if (STAGE_KINDS_[i].toLowerCase() === s) return STAGE_KINDS_[i];
-  return '';
-}
-function stageRows_(ctx) {
-  var data = sheet_(ctx.ss, 'Lists').getDataRange().getValues();
-  var head = (data[0] || []).map(function (h) { return String(h).trim(); });
-  var ci = head.indexOf('Stage'), ki = head.indexOf('Stage Kind'), out = [];
-  if (ci < 0) return out;
-  for (var r = 1; r < data.length; r++) {
-    var name = str_(data[r][ci]);
-    if (!name) continue;
-    var raw = ki < 0 ? '' : str_(data[r][ki]);
-    out.push({ name: name, kind: normKind_(raw), raw: raw });
-  }
-  return out;
-}
-function teamLists_(ctx) {
-  var l = readColumnsAsLists_(sheet_(ctx.ss, 'Lists'));
-  var rows = stageRows_(ctx), kinds = {};
-  rows.forEach(function (r) { kinds[r.name] = r.kind; });
-  return { stage: rows.map(function (r) { return r.name; }), stageKind: kinds, stageRows: rows, interactionType: l['Interaction Type'] || [] };
-}
-function masterLists_(ctx) {
-  var l = readColumnsAsLists_(sheet_(masterSS_(ctx), 'Lists'));
-  return { orgType: l['Org Type'] || [], source: l['Source'] || [] };
-}
-function isYes_(v) { return String(v || '').trim().toLowerCase() === 'yes'; }
-function activeMember_(ctx, name) {
-  name = str_(name);
-  var rows = readTable_(sheet_(ctx.ss, 'Members')).rows;
-  for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['Name'] === name && isYes_(rows[i]['Active'])) return name;
-  }
-  fail_('Please choose your name from the list.');
-}
-function stampName_(ctx, by) {
-  var w = ctx.cfg['Workspace Name'];
-  return w ? by + ' (' + w + ')' : by;
-}
-function findRow_(t, key, value, label) {
-  for (var i = 0; i < t.rows.length; i++) if (t.rows[i][key] === value) return t.rows[i];
-  fail_(label + ' was not found.');
-}
-// Follows Archived To links so an archived organisation resolves to its replacement.
-function resolveOrg_(orgRows, id) {
-  var byId = {};
-  orgRows.forEach(function (o) { byId[o['Org ID']] = o; });
-  for (var hop = 0; hop < 6; hop++) {
-    var o = byId[id];
-    if (!o) fail_('That organisation was not found.');
-    if (o['Record Status'] === 'Archived') {
-      if (!o['Archived To']) fail_('That organisation has been archived.');
-      id = o['Archived To'];
-    } else return id;
-  }
-  fail_('That organisation could not be resolved.');
-}
-
-// Products are typed by hand in the company sheet. IDs and names are trimmed
-// in memory only (the sheet is never rewritten) so hand-typed spaces cannot
-// break a match. Rows with no Product ID cannot be used and are left out.
-function productsTable_(ctx) {
-  var t = readTable_(sheet_(ctx.ss, 'Products'));
-  t.rows.forEach(function (r) {
-    r['Product ID'] = str_(r['Product ID']);
-    r['Product Name'] = str_(r['Product Name']);
-  });
-  return t;
-}
-
-// ====================================================================
-// CORE: getAll — everything the front end needs in one read
-// ====================================================================
-defAction_('getAll', false, function (ctx) {
-  var ms = masterSS_(ctx);
-  var tl = teamLists_(ctx), ml = masterLists_(ctx);
-  var cfg = ctx.cfg;
-  function pubRows(name, ss) { return readTable_(sheet_(ss, name)).rows.map(pub_); }
-  var prodT = productsTable_(ctx);
-  return {
-    config: {
-      workspaceName: cfg['Workspace Name'] || '',
-      toolTitle: cfg['Tool Title'] || '',
-      primaryColour: cfg['Primary Colour'] || '',
-      staleAfterDays: parseInt(cfg['Stale After Days'], 10) || 90,
-      timezone: ctx.tz,
-      today: today_(ctx)
-    },
-    members: pubRows('Members', ctx.ss),
-    lists: { stage: tl.stage, stageKind: tl.stageKind, interactionType: tl.interactionType, orgType: ml.orgType, source: ml.source },
-    stageWarnings: stageWarnings_(tl.stageRows),
-    products: prodT.rows.filter(function (r) { return r['Product ID']; }).map(pub_),
-    productWarnings: productWarnings_(prodT.rows),
-    campaigns: campaignsTable_(ctx).rows.map(pub_),
-    engagements: pubRows('Engagements', ctx.ss),
-    interactions: pubRows('Interactions', ctx.ss),
-    orgs: pubRows('Orgs', ms)
-  };
-});
-
-
-// ====================================================================
-// FEATURE BLOCK F04 — Add organisation (server side)
-// ====================================================================
-/* @spec F04
- * Validations: Server checks: Org Name is required, up to 120 characters. Org Type is required and must be in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address; https:// is added when missing. Added by must be an active member.
- * Calculations: Org ID is the highest existing number in the Org Master plus 1 (and never lower than Config > Next Org Number), written as ORG- plus 4 digits, under a script lock [CONFIRMED]. After the row is written the script checks the ID appears once and issues a new one if another company's script created the same ID at the same moment [CONFIRMED]. Next Org Number is then set to the highest ID plus 1 [CONFIRMED]. Duplicate check: an existing record, Active or Archived, with the same name ignoring case and spaces, or the same website domain ignoring www, is returned as a warning and the record is not saved until the user confirms [CONFIRMED]. Created On/By and Last Updated On/By are set on save as Name (Workspace Name) [CONFIRMED].
- * Dependencies: Org Master (Orgs, Lists, Config); Config (Company): Workspace Name, Master Sheet ID; Members.
- * @end */
-
-function cleanOrgFields_(ctx, org) {
-  var f = {};
-  ORG_TEXT_FIELDS.forEach(function (k) { f[k] = str_(org[k]); });
-  if (!f['Org Name']) fail_('Please enter the organisation name.');
-  if (f['Org Name'].length > 120) fail_('The organisation name is too long (120 characters at most).');
-  var ml = masterLists_(ctx);
-  if (!f['Org Type']) fail_('Please choose the organisation type.');
-  if (ml.orgType.indexOf(f['Org Type']) < 0) fail_('That organisation type is not in the list.');
-  if (f['Source'] && ml.source.indexOf(f['Source']) < 0) fail_('That source is not in the list.');
-  f['Website'] = cleanUrl_(f['Website'], 'Website');
-  return f;
-}
-
-function findDuplicates_(rows, name, website, exceptId) {
-  var nk = nameKey_(name), dom = domainOf_(website), out = [];
-  rows.forEach(function (r) {
-    if (exceptId && r['Org ID'] === exceptId) return;
-    var byName = nk && nameKey_(r['Org Name']) === nk;
-    var byWeb = dom && domainOf_(r['Website']) === dom;
-    if (byName || byWeb) {
-      out.push({
-        orgId: r['Org ID'], name: r['Org Name'], type: r['Org Type'], city: r['City'],
-        recordStatus: r['Record Status'], archivedTo: r['Archived To'], reason: byName ? 'name' : 'website'
-      });
-    }
-  });
-  return out;
-}
-
-function masterConfigTable_(ms) { return readTable_(sheet_(ms, 'Config')); }
-function nextOrgNumberCfg_(ms) {
-  var t = masterConfigTable_(ms);
-  for (var i = 0; i < t.rows.length; i++) if (t.rows[i]['Key'] === 'Next Org Number') return parseInt(t.rows[i]['Value'], 10) || 1;
-  return 1;
-}
-function setNextOrgNumber_(ms, n) {
-  var t = masterConfigTable_(ms);
-  for (var i = 0; i < t.rows.length; i++) {
-    if (t.rows[i]['Key'] === 'Next Org Number') { writeRow_(t, t.rows[i]._row, { 'Value': n }); return; }
-  }
-  appendObjs_(t, [{ 'Key': 'Next Org Number', 'Value': n }]);
-}
-function allocOrgIds_(ms, t, n) {
-  var start = Math.max(maxIdNum_(t.rows, 'Org ID', 'ORG') + 1, nextOrgNumberCfg_(ms)), ids = [];
-  for (var i = 0; i < n; i++) ids.push('ORG-' + pad_(start + i, 4));
-  return ids;
-}
-function newOrgObj_(ctx, f, by, id) {
-  var o = { 'Org ID': id, 'Record Status': 'Active', 'Archived To': '' };
-  ORG_TEXT_FIELDS.forEach(function (k) { o[k] = f[k]; });
-  o['Created On'] = now_(ctx); o['Created By'] = stampName_(ctx, by);
-  o['Last Updated On'] = o['Created On']; o['Last Updated By'] = o['Created By'];
-  return o;
-}
-// After writing: make sure each new ID is unique, then move the counter on.
-function finishOrgIds_(ms, t, newObjs) {
-  var fresh = readTable_(sheet_(ms, 'Orgs')).rows, counts = {};
-  fresh.forEach(function (r) { counts[r['Org ID']] = (counts[r['Org ID']] || 0) + 1; });
-  var maxNum = maxIdNum_(fresh, 'Org ID', 'ORG');
-  newObjs.forEach(function (o) {
-    if (counts[o['Org ID']] > 1) {
-      maxNum++;
-      var nid = 'ORG-' + pad_(maxNum, 4);
-      writeRow_(t, o._row, { 'Org ID': nid });
-      o['Org ID'] = nid;
-    }
-  });
-  setNextOrgNumber_(ms, maxNum + 1);
-}
-
-defAction_('addOrg', true, function (ctx, p) {
-  var by = activeMember_(ctx, p.by);
-  var f = cleanOrgFields_(ctx, p.org || {});
-  var ms = masterSS_(ctx);
-  var t = readTable_(sheet_(ms, 'Orgs'));
-  if (!p.force) {
-    var d = findDuplicates_(t.rows, f['Org Name'], f['Website']);
-    if (d.length) return { duplicates: d };
-  }
-  var o = newOrgObj_(ctx, f, by, allocOrgIds_(ms, t, 1)[0]);
-  appendObjs_(t, [o]);
-  finishOrgIds_(ms, t, [o]);
-  return { org: pub_(o) };
-});
-// ==== END F04 ====
-
-// ====================================================================
-// FEATURE BLOCK F05 — Edit organisation (server side)
-// ====================================================================
-/* @spec F05
- * Validations: Server checks: same field rules as Add organisation. Org ID cannot be changed. An archived organisation cannot be edited. Saved by must be an active member.
- * Calculations: Last Updated On/By are set on every save, as Name (Workspace Name) [CONFIRMED]. Created On/By are never changed [CONFIRMED].
- * Dependencies: Org Master (Orgs, Lists); Members; Config (Company): Workspace Name.
- * @end */
-defAction_('updateOrg', true, function (ctx, p) {
-  var by = activeMember_(ctx, p.by);
-  var ms = masterSS_(ctx);
-  var t = readTable_(sheet_(ms, 'Orgs'));
-  var row = findRow_(t, 'Org ID', str_(p.orgId), 'That organisation');
-  if (row['Record Status'] === 'Archived') fail_('This record has been archived and cannot be edited.');
-  var merged = {};
-  ORG_TEXT_FIELDS.forEach(function (k) { merged[k] = (p.fields && Object.prototype.hasOwnProperty.call(p.fields, k)) ? p.fields[k] : row[k]; });
-  var f = cleanOrgFields_(ctx, merged);
-  var patch = {};
-  ORG_TEXT_FIELDS.forEach(function (k) { patch[k] = f[k]; });
-  patch['Last Updated On'] = now_(ctx);
-  patch['Last Updated By'] = stampName_(ctx, by);
-  writeRow_(t, row._row, patch);
-  Object.keys(patch).forEach(function (k) { row[k] = patch[k]; });
-  return { org: pub_(row) };
-});
-// ==== END F05 ====
-
-// ====================================================================
-// FEATURE BLOCK F06 — Mark organisation as duplicate (server side)
-// ====================================================================
-/* @spec F06
- * Validations: Server checks: the replacement organisation must exist, be Active, and be a different record. An organisation that is already archived cannot be archived again. Saved by must be an active member.
- * Calculations: Record Status becomes Archived and Archived To holds the replacement Org ID; the record stays in the sheet and Last Updated On/By are set [CONFIRMED]. Org IDs stored on engagements and interactions are not rewritten; they are resolved through Archived To when read [CONFIRMED].
- * Dependencies: Org Master (Orgs); Members.
- * @end */
-defAction_('archiveOrg', true, function (ctx, p) {
-  var by = activeMember_(ctx, p.by);
-  var ms = masterSS_(ctx);
-  var t = readTable_(sheet_(ms, 'Orgs'));
-  var row = findRow_(t, 'Org ID', str_(p.orgId), 'That organisation');
-  if (row['Record Status'] === 'Archived') fail_('This record is already archived.');
-  var target = findRow_(t, 'Org ID', str_(p.archivedTo), 'The replacement organisation');
-  if (target['Org ID'] === row['Org ID']) fail_('Please choose a different organisation as the replacement.');
-  if (target['Record Status'] !== 'Active') fail_('The replacement organisation must be an active record.');
-  var patch = {
-    'Record Status': 'Archived', 'Archived To': target['Org ID'],
-    'Last Updated On': now_(ctx), 'Last Updated By': stampName_(ctx, by)
-  };
-  writeRow_(t, row._row, patch);
-  Object.keys(patch).forEach(function (k) { row[k] = patch[k]; });
-  return { org: pub_(row) };
-});
-// ==== END F06 ====
-
-
-// ====================================================================
-// Shared by the engagement and interaction blocks
-// ====================================================================
-function loadOrgRows_(ctx) { return readTable_(sheet_(masterSS_(ctx), 'Orgs')).rows; }
-function httpsOrEmpty_(s) { return cleanUrl_(s, 'The document link'); }
-
-// ====================================================================
-// FEATURE BLOCK F20 — Stage list check (server side)
-// ====================================================================
-/* @spec F20
- * Validations: Server checks: this check only warns and never blocks. A warning is raised when a stage has no Stage Kind or a Kind other than Open, Won or Lost; when there is no Open stage; when there is not exactly one Won stage; when there is no Lost stage; when the Won stage comes before an Open stage; and when a Lost stage comes before the Won stage. A list with no stages at all also raises a warning.
- * Calculations: Stage names and Kinds are read row by row from Lists, so a stage and its Kind stay on the same row even when cells in the column are blank [CONFIRMED]. The words Open, Won and Lost are the only fixed words; no stage name is written in the script [CONFIRMED]. Warnings are worked out every time the data is loaded and returned with it [CONFIRMED]. The first stage in the list is the stage a new engagement starts at [CONFIRMED]. The sheet itself is never rewritten by this check [CONFIRMED].
- * Dependencies: Lists (Company): Stage, Stage Kind.
- * @end */
-function stageWarnings_(rows) {
-  var w = [];
-  if (!rows.length) { w.push({ kind: 'none', message: 'There are no stages yet. Add them under Stage in the Lists tab, with a Stage Kind next to each.' }); return w; }
-  var open = 0, won = 0, lost = 0, lastOpen = -1, firstWon = -1, lastWon = -1, firstLost = -1;
-  rows.forEach(function (r, i) {
-    if (!r.kind) {
-      w.push({ kind: 'kind', message: r.raw ? 'The Stage Kind "' + r.raw + '" next to ' + r.name + ' should be Open, Won or Lost.' : r.name + ' has no Stage Kind. Choose Open, Won or Lost.' });
-      return;
-    }
-    if (r.kind === 'Open') { open++; lastOpen = i; }
-    else if (r.kind === 'Won') { won++; if (firstWon < 0) firstWon = i; lastWon = i; }
-    else { lost++; if (firstLost < 0) firstLost = i; }
-  });
-  if (!open) w.push({ kind: 'open', message: 'There is no Open stage.' });
-  if (!won) w.push({ kind: 'won', message: 'There is no Won stage.' });
-  else if (won > 1) w.push({ kind: 'won', message: 'There should be exactly one Won stage; there are ' + won + '.' });
-  if (!lost) w.push({ kind: 'lost', message: 'There is no Lost stage.' });
-  if (won && lastOpen > firstWon) w.push({ kind: 'order', message: 'The Won stage should come after every Open stage.' });
-  if (won && lost && firstLost < lastWon) w.push({ kind: 'order', message: 'The Lost stage should come after the Won stage.' });
-  return w;
-}
-// ==== END F20 ====
-
-// ====================================================================
-// FEATURE BLOCK F21 — Campaigns on engagements (server side)
-// ====================================================================
-/* @spec F21
- * Validations: Server checks: a Campaign ID, if given, must exist in the Campaigns tab and the campaign must be Active; an engagement may keep its current campaign even when that campaign has since become inactive. The Campaign ID can be cleared. A missing Campaigns tab is treated as an empty list.
- * Calculations: Campaign IDs and names are trimmed in memory before they are matched, and the sheet is never rewritten [CONFIRMED]. Campaigns are typed in the sheet; the script only reads them [CONFIRMED].
- * Dependencies: Campaigns (company sheet); Engagements: Campaign ID.
- * @end */
-function campaignsTable_(ctx) {
-  var sh = ctx.ss.getSheetByName('Campaigns');
-  if (!sh) return { sheet: null, headers: [], rows: [] };
-  var t = readTable_(sh);
-  t.rows.forEach(function (r) { r['Campaign ID'] = str_(r['Campaign ID']); r['Campaign Name'] = str_(r['Campaign Name']); });
-  t.rows = t.rows.filter(function (r) { return r['Campaign ID']; });
-  return t;
-}
-function cleanCampaign_(ctx, id, keepId) {
-  id = str_(id);
-  if (!id) return '';
-  if (keepId && id === keepId) return id;
-  var rows = campaignsTable_(ctx).rows, hit = null;
-  rows.forEach(function (r) { if (r['Campaign ID'] === id) hit = r; });
-  if (!hit) fail_('That campaign was not found.');
-  if (!isYes_(hit['Active'])) fail_(hit['Campaign Name'] + ' is no longer active.');
   return id;
 }
-// ==== END F21 ====
-
-// ====================================================================
-// FEATURE BLOCK F22 — Stage History log (server side)
-// ====================================================================
-/* @spec F22
- * Feature: Stage History log
- * Status: New in v5
- * Screen: None (written by the script when an engagement is added or its stage changes)
- * Delta: New append-only tab in the company sheet. One row is added for every engagement created through the tool and for every stage change. It feeds the Insights funnel and weekly movement.
- * Validations: Server checks: the Stage History tab must exist; if it does not, the save is refused before anything is written and the message names the missing tab. Rows are never edited or deleted by the script.
- * Calculations: Log ID is the highest existing number plus 1, written as STG- plus 5 digits, under a script lock [CONFIRMED]. A new engagement gets one row with From Stage blank and To Stage the first stage [CONFIRMED]. A save that changes Stage adds one row with From Stage the old stage, To Stage the new stage, Changed On the current time in the Config timezone and Changed By the person saving [CONFIRMED]. A save that does not change Stage adds no row [CONFIRMED]. A stage typed directly in the sheet is not logged [CONFIRMED].
- * Dependencies: Stage History (company sheet); Engagements: Stage; Members; F07, F08.
- * @end */
-function stageHistoryTable_(ctx) { return readTable_(sheet_(ctx.ss, 'Stage History')); }
-function logStageChanges_(ctx, hist, entries) {
-  if (!entries.length) return;
-  var ids = nextIds_(hist.rows, 'Log ID', 'STG', 5, entries.length), ts = now_(ctx);
-  appendObjs_(hist, entries.map(function (e, i) {
-    return { 'Log ID': ids[i], 'Engagement ID': e.engagementId, 'From Stage': e.from, 'To Stage': e.to, 'Changed On': ts, 'Changed By': e.by };
-  }));
+function reindex() {
+  const I = S.idx = { org: {}, prod: {}, eng: {}, engByOrg: {}, intByOrg: {}, intByEng: {}, lastByEng: {}, lastByOrg: {}, camp: {} };
+  S.orgs.forEach(o => { I.org[o['Org ID']] = o; });
+  S.products.forEach(p => { I.prod[p['Product ID']] = p; });
+  S.campaigns.forEach(c => { I.camp[c['Campaign ID']] = c; });
+  S.engagements.forEach(e => {
+    I.eng[e['Engagement ID']] = e;
+    const oid = resolveOrgId(e['Org ID']);
+    (I.engByOrg[oid] = I.engByOrg[oid] || []).push(e);
+  });
+  S.interactions.forEach(i => {
+    const oid = resolveOrgId(i['Org ID']);
+    (I.intByOrg[oid] = I.intByOrg[oid] || []).push(i);
+    if (i['Engagement ID']) (I.intByEng[i['Engagement ID']] = I.intByEng[i['Engagement ID']] || []).push(i);
+  });
+  const byDateDesc = (a, b) => (b['Date'] + b['Interaction ID']).localeCompare(a['Date'] + a['Interaction ID']);
+  Object.keys(I.intByOrg).forEach(k => { I.intByOrg[k].sort(byDateDesc); I.lastByOrg[k] = I.intByOrg[k][0]['Date']; });
+  Object.keys(I.intByEng).forEach(k => { I.intByEng[k].sort(byDateDesc); I.lastByEng[k] = I.intByEng[k][0]['Date']; });
 }
-// ==== END F22 ====
+function productName(pid) { const p = S.idx.prod[pid]; return p ? p['Product Name'] : pid; }
+function orgName(oid) { const o = S.idx.org[oid]; return o ? o['Org Name'] : oid; }
+function engLabel(e) { return productName(e['Product ID']); }
+function campaignName(cid) { const c = S.idx.camp[cid]; return c ? c['Campaign Name'] : cid; }
+// Going cold: an Open stage other than the first one, quiet for longer than Stale After Days.
+function isStale(e) {
+  if (!isOpen(e['Stage']) || e['Stage'] === firstStage()) return false;
+  const from = S.idx.lastByEng[e['Engagement ID']] || e['Start Date'];
+  return daysBetween(from, todayStr()) > (S.cfg.staleAfterDays || 90);
+}
+function stageClass(st) {
+  const k = kindOf(st);
+  return k === 'Won' ? 'st-conv' : k === 'Lost' ? 'st-ni' : (k === 'Open' && st !== firstStage()) ? 'st-prog' : 'st-new';
+}
+function stageBadge(st) { return '<span class="badge ' + stageClass(st) + '">' + esc(st) + '</span>'; }
+function coldBadge() { return '<span class="badge cold">Going cold</span>'; }
+function brandTitle() { return S.cfg.toolTitle || 'Relationships'; }
 
-// ====================================================================
-// FEATURE BLOCK F07 — Add engagements (server side)
-// ====================================================================
-/* @spec F07
- * Validations: Server checks: the organisation must exist (an archived one is replaced by its Archived To record). At least one product must be chosen; each must exist and be Active. A product that already has an engagement with this organisation is rejected. Owner must be an active member. Start Date must be a valid date. Document Link, if given, must be a web address. At least one stage must be set up in Lists. A campaign, if given, follows F21.
- * Calculations: One engagement is created per chosen product, all with the same owner, key contact, expectations, start date, document link and campaign [CONFIRMED]. Engagement ID is the highest existing number plus 1, written as ENG- plus 4 digits, under a script lock [CONFIRMED]. Stage starts as the first stage in Lists > Stage; Stage Changed On is set to today [CONFIRMED]. One Stage History row is added per engagement (see F22) [CONFIRMED]. Created On/By are set on save [CONFIRMED]. Product IDs read from the Products tab are trimmed of leading and trailing spaces before they are matched [CONFIRMED].
- * Dependencies: Products (typed in the company sheet); Members; Org Master (Orgs); Lists (Company): Stage; Campaigns; Stage History.
+/* ---------- branding from Config ---------- */
+function mixHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const ch = s => { const x = (pa >> s) & 255, y = (pb >> s) & 255; return Math.round(x + (y - x) * t); };
+  return '#' + [16, 8, 0].map(s => ch(s).toString(16).padStart(2, '0')).join('');
+}
+function applyBrand() {
+  const c = S.cfg.primaryColour || '';
+  document.title = brandTitle();
+  if (!/^#[0-9a-f]{6}$/i.test(c)) return;
+  const st = document.documentElement.style;
+  st.setProperty('--primary', c);
+  st.setProperty('--primary-dark', mixHex(c, '#000000', 0.25));
+  st.setProperty('--primary-soft', mixHex(c, '#ffffff', 0.88));
+}
+
+/* ---------- chrome, router, sheets, toasts ---------- */
+function setChrome(o) {
+  $('#hTitle').textContent = o.title || '';
+  $('#hSub').textContent = o.sub || '';
+  $('#backBtn').hidden = !o.back;
+  $('#hActions').innerHTML = o.actions || '';
+  REG.hooks.chrome.forEach(f => f(o));
+}
+function setBar(html) {
+  const b = $('#bar');
+  if (!html) { b.hidden = true; b.innerHTML = ''; return; }
+  b.hidden = false;
+  b.innerHTML = '<div class="bar-error" id="barError"></div><div class="bar-inner">' + html + '</div>';
+}
+function show(html, bar) { $('#view').innerHTML = html; setBar(bar); }
+function page(title, back, actions) { document.body.classList.remove('spec-view'); setChrome({ title: title, sub: '', back: back !== false, actions: actions || '' }); }
+// The header refresh button appears only while the Refresh feature (F17) is present.
+function refreshBtn() { return REG.acts['f17.refresh'] ? '<button class="icon-btn refresh" data-act="f17.refresh" aria-label="Refresh" title="Refresh">&#8635;</button>' : ''; }
+
+const navStack = [];
+let replacing = false;
+function go(path) { location.hash = '#/' + path; }
+function replace(path) { replacing = true; location.replace('#/' + path); }
+function back() { if (navStack.length > 1) history.back(); else location.hash = '#/home'; }
+function onHash() {
+  const h = location.hash || '#/home';
+  if (replacing && navStack.length) navStack[navStack.length - 1] = h;
+  else if (navStack.length >= 2 && navStack[navStack.length - 2] === h) navStack.pop();
+  else if (navStack[navStack.length - 1] !== h) navStack.push(h);
+  replacing = false;
+  route();
+}
+function route() {
+  closeSheet();
+  const h = (location.hash || '#/home').replace(/^#\/?/, '');
+  const parts = h.split('/').map(decodeURIComponent);
+  const name = parts.shift() || 'home';
+  const fn = REG.routes[name] || REG.routes.home;
+  window.scrollTo(0, 0);
+  try { fn(parts); }
+  catch (e) { console.error(e); show('<div class="empty">Something went wrong showing this page.</div>'); }
+}
+function openSheet(html) { $('#sheetHost').innerHTML = '<div class="sheet-back" data-act="core.closeSheet"><div class="sheet">' + html + '</div></div>'; }
+function closeSheet() { $('#sheetHost').innerHTML = ''; }
+let toastTimer = null;
+function toast(msg) {
+  let t = $('#toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
+}
+function confirmed(title, sub) {
+  const o = $('#confirmOverlay');
+  $('#confirmTitle').textContent = title; $('#confirmSub').textContent = sub || '';
+  o.classList.add('show');
+  $$('circle, path', o).forEach(el => { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; });
+  setTimeout(() => o.classList.remove('show'), 1500);
+}
+
+/* ---------- delegated events ---------- */
+document.addEventListener('click', e => {
+  const chip = e.target.closest('.chips .chip[data-v]');
+  if (chip && !chip.classList.contains('disabled')) {
+    const g = chip.closest('.chips');
+    if (g.hasAttribute('data-multi')) chip.classList.toggle('selected');
+    else { $$('.chip', g).forEach(c => c.classList.remove('selected')); chip.classList.add('selected'); }
+    g.dispatchEvent(new CustomEvent('chipchange', { bubbles: true, detail: { v: chip.dataset.v } }));
+    return;
+  }
+  const item = e.target.closest('.combo-item');
+  if (item) { comboPick(item.closest('.combo'), item.dataset.v); return; }
+  $$('.combo-list').forEach(l => { if (!l.closest('.combo').contains(e.target)) l.hidden = true; });
+  const a = e.target.closest('[data-act]');
+  if (a && REG.acts[a.dataset.act]) REG.acts[a.dataset.act](a, e);
+});
+REG.acts['core.closeSheet'] = (el, e) => { if (e.target === el) closeSheet(); };
+REG.acts['core.back'] = () => back();
+$('#backBtn').addEventListener('click', back);
+
+/* ---------- form helpers ---------- */
+function labelHtml(label, req) { return '<label class="field-label">' + esc(label) + (req ? '' : ' <span class="optional">optional</span>') + '</label>'; }
+function fieldWrap(key, inner, o) {
+  return '<div class="field" data-f="' + escA(key) + '"' + (o.req ? ' data-req="1"' : '') + (o.cond ? ' data-cond="' + escA(o.cond) + '"' : '') + (o.hidden ? ' hidden' : '') + '>' + inner + '</div>';
+}
+function fText(key, label, o) {
+  o = o || {};
+  const v = o.value || '';
+  const inner = labelHtml(label, o.req) + (o.area
+    ? '<textarea data-k="' + escA(key) + '" rows="' + (o.rows || 3) + '" placeholder="' + escA(o.placeholder || '') + '">' + esc(v) + '</textarea>'
+    : '<input type="' + (o.type || 'text') + '" data-k="' + escA(key) + '" value="' + escA(v) + '" placeholder="' + escA(o.placeholder || '') + '" autocomplete="off">');
+  return fieldWrap(key, inner, o);
+}
+function fDate(key, label, o) {
+  o = o || {};
+  const inner = labelHtml(label, o.req) + '<input type="date" data-k="' + escA(key) + '" value="' + escA(o.value || '') + '"' + (o.min ? ' min="' + escA(o.min) + '"' : '') + (o.max ? ' max="' + escA(o.max) + '"' : '') + '>';
+  return fieldWrap(key, inner, o);
+}
+function optVal(x) { return typeof x === 'string' ? { v: x, l: x } : x; }
+function fSelect(key, label, options, o) {
+  o = o || {};
+  const opts = options.map(optVal).map(x => '<option value="' + escA(x.v) + '"' + (x.v === o.value ? ' selected' : '') + '>' + esc(x.l) + '</option>').join('');
+  const inner = labelHtml(label, o.req) + '<select data-k="' + escA(key) + '"><option value="">' + esc(o.blank || (o.req ? 'Select…' : '—')) + '</option>' + opts + '</select>';
+  return fieldWrap(key, inner, o);
+}
+function fChips(key, label, options, o) {
+  o = o || {};
+  const sel = Array.isArray(o.value) ? o.value : (o.value ? [o.value] : []);
+  const chips = options.map(optVal).map(x => '<div class="chip' + (sel.indexOf(x.v) >= 0 ? ' selected' : '') + (x.disabled ? ' disabled' : '') + '" data-v="' + escA(x.v) + '">' + esc(x.l) + '</div>').join('');
+  const inner = labelHtml(label, o.req) + '<div class="chips"' + (o.multi ? ' data-multi="1"' : '') + '>' + chips + '</div>';
+  return fieldWrap(key, inner, o);
+}
+// Chips for six options or fewer, a dropdown for longer lists (design spec).
+function fChoice(key, label, options, o) {
+  o = o || {};
+  return (o.multi || options.length <= 6) ? fChips(key, label, options, o) : fSelect(key, label, options, o);
+}
+const COMBOS = {};
+let comboN = 0;
+function fCombo(key, label, items, o) {
+  o = o || {};
+  const id = 'cb' + (++comboN);
+  COMBOS[id] = items;
+  const cur = items.find(x => x.v === o.value);
+  const inner = labelHtml(label, o.req) + '<div class="combo" data-combo="' + id + '"><input type="text" class="combo-in" autocomplete="off" placeholder="' + escA(o.placeholder || 'Start typing…') + '" value="' + escA(cur ? cur.l : '') + '"><input type="hidden" data-k="' + escA(key) + '" value="' + escA(cur ? cur.v : '') + '"><div class="combo-list" hidden></div></div>';
+  return fieldWrap(key, inner, o);
+}
+function comboRender(box) {
+  const items = COMBOS[box.dataset.combo] || [];
+  const q = $('.combo-in', box).value.trim().toLowerCase();
+  const list = $('.combo-list', box);
+  const m = items.filter(x => !q || (x.l + ' ' + (x.s || '')).toLowerCase().indexOf(q) >= 0).slice(0, 40);
+  list.innerHTML = m.length ? m.map(x => '<div class="combo-item" data-v="' + escA(x.v) + '">' + esc(x.l) + (x.s ? '<span class="s">' + esc(x.s) + '</span>' : '') + '</div>').join('') : '<div class="combo-empty">No match</div>';
+  list.hidden = false;
+}
+function comboPick(box, v) {
+  const x = (COMBOS[box.dataset.combo] || []).find(i => i.v === v);
+  if (!x) return;
+  $('.combo-in', box).value = x.l; $('[data-k]', box).value = x.v; $('.combo-list', box).hidden = true;
+  box.dispatchEvent(new CustomEvent('combochange', { bubbles: true, detail: { v: x.v } }));
+}
+document.addEventListener('input', e => {
+  if (e.target.classList.contains('combo-in')) { const box = e.target.closest('.combo'); $('[data-k]', box).value = ''; comboRender(box); }
+});
+document.addEventListener('focusin', e => { if (e.target.classList.contains('combo-in')) comboRender(e.target.closest('.combo')); });
+
+function fieldVal(w) {
+  const ch = $('.chips', w);
+  if (ch) { const sel = $$('.chip.selected', ch).map(c => c.dataset.v); return ch.hasAttribute('data-multi') ? sel : (sel[0] || ''); }
+  const i = $('[data-k]', w);
+  return i ? i.value.trim() : '';
+}
+function fieldHidden(w) { return w.hidden || !!w.closest('[hidden]'); }
+// Hidden conditional fields are left out of the result (so they are never submitted).
+function readForm(root) {
+  const o = {};
+  $$('.field[data-f]', root).forEach(w => { if (!fieldHidden(w)) o[w.dataset.f] = fieldVal(w); });
+  return o;
+}
+function validateForm(root) {
+  const miss = $$('.field[data-req]', root).filter(w => !fieldHidden(w)).filter(w => { const v = fieldVal(w); return Array.isArray(v) ? !v.length : v === ''; });
+  if (!miss.length) return null;
+  miss[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  miss[0].classList.add('flash');
+  setTimeout(() => miss[0].classList.remove('flash'), 2000);
+  return 'Please complete: ' + miss.map(w => $('.field-label', w).textContent.trim()).join(', ');
+}
+function barError(msg) { const e = $('#barError'); if (e) { e.textContent = msg || ''; e.style.display = msg ? 'block' : 'none'; } }
+// Runs a save: validation message, busy button, and any error shown above the button.
+async function runSave(btn, fn) {
+  barError('');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try { await fn(); }
+  catch (e) { barError(e.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+
+/* ---------- shared renderers ---------- */
+function intRowHtml(i, o) {
+  o = o || {};
+  const eng = i['Engagement ID'] ? S.idx.eng[i['Engagement ID']] : null;
+  const fu = i['Follow-up Date'] && !isYes(i['Follow-up Done'])
+    ? ' <span class="' + (i['Follow-up Date'] < todayStr() ? 'overdue' : '') + '">Follow up ' + esc(fmtD(i['Follow-up Date'])) + '</span>' : '';
+  return '<div class="int"><div class="int-top"><div><b>' + esc(fmtD(i['Date'])) + '</b> · ' + esc(i['Type']) + ' · ' + esc(i['Logged By'])
+    + (o.showOrg ? ' · ' + esc(orgName(resolveOrgId(i['Org ID']))) : '') + (eng ? ' · ' + esc(engLabel(eng)) : '') + '</div>'
+    + (REG.routes['edit-int'] ? '<a class="link-btn int-edit" href="#/edit-int/' + escA(i['Interaction ID']) + '">Edit</a>' : '') + '</div>'
+    + '<div class="int-sum">' + esc(i['Summary']) + '</div>'
+    + (i['Spoke With'] ? '<div class="small muted">With ' + esc(i['Spoke With']) + '</div>' : '')
+    + ((i['Next Step'] || fu) ? '<div class="int-next">' + (i['Next Step'] ? 'Next: ' + esc(i['Next Step']) : '') + fu + '</div>' : '') + '</div>';
+}
+function contactsHtml(text) {
+  const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
+  return lines.map(line => {
+    const toks = line.split(',').map(t => t.trim()).filter(Boolean);
+    let name = '', roles = [], links = [];
+    toks.forEach((t, idx) => {
+      if (/^\+?[\d][\d\s().-]{6,}$/.test(t)) links.push('<a href="tel:' + escA(t.replace(/[\s().-]/g, '')) + '">' + esc(t) + '</a>');
+      else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) links.push('<a href="mailto:' + escA(t) + '">' + esc(t) + '</a>');
+      else if (!name && idx === 0) name = t;
+      else roles.push(t);
+    });
+    return '<div class="contact">' + (name ? '<div class="c-name">' + esc(name) + '</div>' : '') + (roles.length ? '<div class="c-role">' + esc(roles.join(', ')) + '</div>' : '')
+      + (links.length ? '<div class="c-links">' + links.join('') + '</div>' : '') + '</div>';
+  }).join('');
+}
+// Shared by Add organisation (F04) and Edit organisation (F05).
+function orgFormHtml(o) {
+  o = o || {};
+  return '<div class="card">'
+    + fText('Org Name', 'Organisation name', { req: true, value: o['Org Name'] })
+    + fChoice('Org Type', 'Type', S.lists.orgType, { req: true, value: o['Org Type'] })
+    + '<div class="two">' + fText('City', 'City', { value: o['City'] }) + fText('State', 'State', { value: o['State'] }) + '</div>'
+    + fText('Website', 'Website', { value: o['Website'], type: 'url', placeholder: 'https://' })
+    + fChoice('Source', 'How did we come to know them?', S.lists.source, { value: o['Source'] })
+    + fText('Tags', 'Tags', { value: o['Tags'], placeholder: 'schools, mental health' })
+    + fText('About', 'About', { value: o['About'], area: true, rows: 3 })
+    + fText('Contacts', 'Contacts', { value: o['Contacts'], area: true, rows: 5, placeholder: 'Name, role, phone, email\n(one person per line)' })
+    + '</div>';
+}
+
+/* ---------- home screen shell: tabs and banners register themselves ---------- */
+REG.routes.home = function () {
+  setChrome({
+    title: brandTitle(), sub: S.cfg.workspaceName || '', back: false,
+    actions: refreshBtn() + (REG.addMenu.length ? '<button class="btn btn-sm btn-primary" data-act="core.add">+ Add</button>' : '') + '<button class="link-btn" data-act="core.settings">Settings</button>'
+  });
+  const tabs = REG.homeTabs.slice().sort((a, b) => a.order - b.order);
+  if (!tabs.length) { show('<div class="empty">Nothing to show yet.</div>'); return; }
+  let cur = tabs.find(t => t.id === S.ui.tab) || tabs[0];
+  S.ui.tab = cur.id;
+  show(REG.homeBanners.map(f => f()).join('')
+    + '<div class="identity-bar"><span>Using as <strong>' + esc(S.me) + '</strong></span><button class="link-btn" data-act="core.who">Not you?</button></div>'
+    + '<div class="tabs">' + tabs.map(t => '<button class="tab' + (t.id === cur.id ? ' active' : '') + '" data-act="core.tab" data-id="' + escA(t.id) + '">' + esc(t.label) + '</button>').join('') + '</div>'
+    + '<div id="tabBody"></div>');
+  cur.render($('#tabBody'));
+};
+REG.acts['core.tab'] = el => { S.ui.tab = el.dataset.id; REG.routes.home(); };
+REG.acts['core.settings'] = () => go('settings');
+REG.acts['core.add'] = () => {
+  openSheet(REG.addMenu.slice().sort((a, b) => a.order - b.order).map(m => '<button class="btn" data-act="core.addgo" data-route="' + escA(m.route) + '">' + esc(m.label) + '</button>').join(''));
+};
+REG.acts['core.addgo'] = el => { closeSheet(); go(el.dataset.route); };
+
+/* ---------- settings screen: features add their own links ---------- */
+REG.routes.settings = function () {
+  page('Settings');
+  const groups = {};
+  REG.settingsItems.slice().sort((a, b) => a.order - b.order).forEach(it => { (groups[it.group] = groups[it.group] || []).push(it); });
+  show(Object.keys(groups).map(g => '<div class="card"><div class="card-title">' + esc(g) + '</div><div class="list" style="box-shadow:none;border:none;margin:0">'
+    + groups[g].map(it => '<a class="row" href="#/' + escA(it.route) + '"><div class="row-title">' + esc(it.label) + '</div></a>').join('') + '</div></div>').join('')
+    + '<div class="card"><div class="card-title">This device</div>'
+    + '<div class="row-top" style="margin-bottom:6px"><div>Using as <strong>' + esc(S.me) + '</strong></div><button class="link-btn" data-act="core.who">Change</button></div>' + REG.deviceRows.map(f => f()).join('')
+    + '<div class="row-top"><div class="muted">Fetch the latest data</div><button class="link-btn" data-act="core.reload">Reload</button></div>'
+    + '<div class="row-top"><div class="muted">Forget the team key on this device</div><button class="link-btn" data-act="core.forget">Disconnect</button></div></div>');
+};
+
+
+/* ==== BEGIN F02 — Organisation search and filter ============================ */
+/* @spec F02
+ * Feature: Organisation search and filter
+ * Status: Modified in v4
+ * Screen: Home > Organisations
+ * Delta: Home tab from v1: search box, a Filters panel and a list of active organisations. In v4 a Person filter is added above the search box, set to the person using the tool, and the Owner filter in the Filters panel is replaced by it (type, city, tag and stage stay in the panel). Reuse the Engagements tab's owner filter pattern; the Person list is fresh logic.
+ * Validations: Form: none; every filter is optional.
+ * Calculations: Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Stage filter matches organisations that have at least one engagement of this company at that stage [CONFIRMED]. In v4 the Person filter matches an organisation when it was last updated by that person (the Last Updated By stamp, which is also set when the organisation is first added) or when that person owns one of this company's engagements with it [CONFIRMED]. The Person filter starts as the person using the tool, and All shows everyone [CONFIRMED]. The Person list holds this company's active members and engagement owners, plus anyone else seen in the stamps, shown as Name (Workspace Name) [CONFIRMED]. Person and Stage are checked separately, so they no longer have to be met by the same engagement [CONFIRMED]. When the Person filter leaves nothing, the empty message offers Show everyone [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the company's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].
+ * Dependencies: Org Master (Orgs): Last Updated By; Engagements: Owner; Config (Company): Workspace Name; Members; Products; F03 (row opens the organisation page).
  * @end */
-defAction_('addEngagements', true, function (ctx, p) {
-  var by = activeMember_(ctx, p.by);
-  var orgRows = loadOrgRows_(ctx);
-  var orgId = resolveOrg_(orgRows, str_(p.orgId));
-  var pids = (p.productIds || []).map(str_).filter(function (x) { return x; });
-  if (!pids.length) fail_('Please choose at least one product.');
-  var prodT = productsTable_(ctx);
-  var engT = readTable_(sheet_(ctx.ss, 'Engagements'));
-  pids.forEach(function (pid) {
-    var pr = findRow_(prodT, 'Product ID', pid, 'A chosen product');
-    if (!isYes_(pr['Active'])) fail_(pr['Product Name'] + ' is no longer active.');
-    engT.rows.forEach(function (e) {
-      if (e['Product ID'] !== pid) return;
-      var eo;
-      try { eo = resolveOrg_(orgRows, e['Org ID']); } catch (x) { eo = e['Org ID']; }
-      if (eo === orgId) fail_('There is already an engagement for ' + pr['Product Name'] + ' with this organisation.');
+const F02 = { q: '', type: '', city: '', tag: '', person: null, stage: '', open: false, shown: 60 };
+REG.homeTabs.push({ id: 'orgs', label: 'Organisations', order: 1, render: f02_render });
+
+function f02_active() { return activeOrgs(); }
+function f02_tagsOf(o) { return String(o['Tags'] || '').split(',').map(t => t.trim()).filter(Boolean); }
+function f02_distinct(arr) { return Array.from(new Set(arr.filter(Boolean))).sort((a, b) => a.localeCompare(b)); }
+function f02_filterCount() { return ['type', 'city', 'tag', 'person', 'stage'].filter(k => F02[k]).length; }
+function f02_match(o) {
+  if (F02.q) {
+    const hay = [o['Org Name'], o['City'], o['State'], o['Tags'], o['Contacts']].join(' ').toLowerCase();
+    if (!F02.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.indexOf(w) >= 0)) return false;
+  }
+  if (F02.type && o['Org Type'] !== F02.type) return false;
+  if (F02.city && o['City'] !== F02.city) return false;
+  if (F02.tag && f02_tagsOf(o).map(t => t.toLowerCase()).indexOf(F02.tag.toLowerCase()) < 0) return false;
+  if (F02.stage && !(S.idx.engByOrg[o['Org ID']] || []).some(e => e['Stage'] === F02.stage)) return false;
+  if (F02.person) {
+    const p = f02_people().find(x => x.v === F02.person);
+    const stamped = o['Last Updated By'] === F02.person;
+    const owns = !!(p && p.own) && (S.idx.engByOrg[o['Org ID']] || []).some(e => e['Owner'] === p.own);
+    if (!stamped && !owns) return false;
+  }
+  return true;
+}
+// The people offered in the Person filter. v is the Name (Workspace Name) stamp; own is the plain name for this company's people.
+function f02_stamp(name) { return S.cfg.workspaceName ? name + ' (' + S.cfg.workspaceName + ')' : name; }
+function f02_people() {
+  const ownNames = f02_distinct(activeNames().concat(S.engagements.map(e => e['Owner'])));
+  const own = ownNames.map(n => ({ v: f02_stamp(n), l: n, own: n }));
+  const seen = {}; own.forEach(p => { seen[p.v] = 1; });
+  const others = f02_distinct(S.orgs.map(o => o['Last Updated By'])).filter(v => !seen[v]).map(v => ({ v: v, l: v, own: '' }));
+  return own.concat(others);
+}
+function f02_select(id, label, opts, val) {
+  return '<div class="field"><label class="field-label">' + esc(label) + '</label><select id="' + id + '"><option value="">All</option>'
+    + opts.map(o => '<option' + (o === val ? ' selected' : '') + '>' + esc(o) + '</option>').join('') + '</select></div>';
+}
+function f02_render(host) {
+  const orgs = f02_active();
+  const people = f02_people();
+  if (F02.person === null) F02.person = f02_stamp(S.me);
+  const tags = f02_distinct([].concat.apply([], orgs.map(f02_tagsOf)));
+  host.innerHTML = '<div class="filter-panel" style="grid-template-columns:1fr;margin-bottom:10px"><div class="field"><label class="field-label">Person</label><select id="f02person"><option value="">All</option>'
+    + people.map(p => '<option value="' + escA(p.v) + '"' + (p.v === F02.person ? ' selected' : '') + '>' + esc(p.l) + '</option>').join('') + '</select></div></div>'
+    + '<div class="searchrow"><input type="search" id="f02q" placeholder="Search name, city, tag, contact" value="' + escA(F02.q) + '">'
+    + '<button class="btn btn-sm" id="f02fbtn">Filters' + (f02_filterCount() ? ' (' + f02_filterCount() + ')' : '') + '</button></div>'
+    + '<div class="filter-panel" id="f02panel"' + (F02.open ? '' : ' hidden') + '>'
+    + f02_select('f02type', 'Type', S.lists.orgType, F02.type) + f02_select('f02city', 'City', f02_distinct(orgs.map(o => o['City'])), F02.city)
+    + f02_select('f02tag', 'Tag', tags, F02.tag)
+    + f02_select('f02stage', 'Stage', S.lists.stage, F02.stage)
+    + '<div class="wide"><button class="link-btn" id="f02clear">Clear filters</button></div></div>'
+    + '<div class="count-line" id="f02count"></div><div id="f02list"></div>';
+  $('#f02q').addEventListener('input', e => { F02.q = e.target.value; F02.shown = 60; f02_list(); });
+  $('#f02fbtn').addEventListener('click', () => { F02.open = !F02.open; $('#f02panel').hidden = !F02.open; });
+  [['f02person', 'person'], ['f02type', 'type'], ['f02city', 'city'], ['f02tag', 'tag'], ['f02stage', 'stage']].forEach(p => {
+    $('#' + p[0]).addEventListener('change', e => { F02[p[1]] = e.target.value; F02.shown = 60; $('#f02fbtn').textContent = 'Filters' + (f02_filterCount() ? ' (' + f02_filterCount() + ')' : ''); f02_list(); });
+  });
+  $('#f02clear').addEventListener('click', () => { ['type', 'city', 'tag', 'person', 'stage'].forEach(k => { F02[k] = ''; }); f02_render(host); });
+  f02_list();
+}
+function f02_row(o) {
+  const es = (S.idx.engByOrg[o['Org ID']] || []).slice(0, 2);
+  const more = (S.idx.engByOrg[o['Org ID']] || []).length - es.length;
+  return '<a class="row" href="#/org/' + escA(o['Org ID']) + '"><div class="row-title">' + esc(o['Org Name']) + '</div>'
+    + '<div class="row-sub">' + esc([o['Org Type'], o['City']].filter(Boolean).join(' · ')) + '</div>'
+    + (es.length ? '<div class="row-tags">' + es.map(e => '<span class="badge ' + stageClass(e['Stage']) + '">' + esc(engLabel(e)) + ' · ' + esc(e['Stage']) + '</span>').join('') + (more > 0 ? '<span class="badge">+' + more + '</span>' : '') + '</div>' : '') + '</a>';
+}
+function f02_list() {
+  const all = f02_active();
+  const m = all.filter(f02_match).sort((a, b) => a['Org Name'].localeCompare(b['Org Name']));
+  $('#f02count').textContent = plural(m.length, 'organisation');
+  if (!all.length) { $('#f02list').innerHTML = '<div class="empty">No organisations yet.' + (REG.routes['new-org'] ? '<br><a class="btn btn-primary" href="#/new-org">Add the first one</a>' : '') + '</div>'; return; }
+  if (!m.length) {
+    $('#f02list').innerHTML = '<div class="empty">Nothing matches' + (F02.q ? ' “' + esc(F02.q) + '”' : '') + '.'
+      + (F02.person ? '<br><button class="btn" id="f02everyone">Show everyone</button>' : '')
+      + (REG.routes['new-org'] && F02.q ? '<br><a class="btn btn-primary" href="#/new-org/' + encodeURIComponent(F02.q) + '">Add “' + esc(F02.q) + '” as a new organisation</a>' : '') + '</div>';
+    const ev = $('#f02everyone'); if (ev) ev.addEventListener('click', () => { F02.person = ''; f02_render($('#tabBody')); });
+    return;
+  }
+  $('#f02list').innerHTML = '<div class="list">' + m.slice(0, F02.shown).map(f02_row).join('') + '</div>'
+    + (m.length > F02.shown ? '<div class="center"><button class="btn" id="f02more">Show more</button></div>' : '');
+  const more = $('#f02more'); if (more) more.addEventListener('click', () => { F02.shown += 60; f02_list(); });
+}
+/* ==== END F02 ================================================================ */
+
+/* ==== BEGIN F03 — Organisation briefing page ================================= */
+/* @spec F03
+ * Feature: Organisation briefing page
+ * Status: New
+ * Screen: Organisation page (opened from any list)
+ * Delta: New screen: name, type, place, website, tags, last contact, contacts, about, the company's engagements and recent interactions, and who created and last updated the record.
+ * Validations: Form: none (read-only page).
+ * Calculations: Last contact is the latest interaction Date among this company's interactions with the organisation [CONFIRMED]. Opening an archived organisation shows the organisation named in Archived To instead [CONFIRMED]. Engagements and interactions recorded against an archived Org ID appear on the replacement organisation [CONFIRMED]. Phone numbers and email addresses in Contacts become tappable links [CONFIRMED]. Created by and Last updated by show Name (Workspace Name) so another company can see whom to ask [CONFIRMED].
+ * Dependencies: Org Master (Orgs); Engagements; Interactions; sections added by F08 and F10; actions added by F05, F06, F07 and F10.
+ * @end */
+REG.routes.org = function (args) {
+  const id = args[0];
+  const rid = resolveOrgId(id);
+  if (rid !== id) { replace('org/' + rid); return; }
+  const o = S.idx.org[id];
+  page(o ? o['Org Name'] : 'Organisation', true, refreshBtn());
+  if (!o) { show('<div class="empty">That organisation could not be found.</div>'); return; }
+  const last = S.idx.lastByOrg[id];
+  const place = [o['City'], o['State']].filter(Boolean).join(', ');
+  const tags = String(o['Tags'] || '').split(',').map(t => t.trim()).filter(Boolean);
+  let html = (o['Record Status'] === 'Archived' ? '<div class="banner">This record has been archived.</div>' : '')
+    + '<div class="card"><div class="org-name">' + esc(o['Org Name']) + '</div>'
+    + '<div class="badges"><span class="badge tag">' + esc(o['Org Type']) + '</span>' + (o['Source'] ? '<span class="badge">' + esc(o['Source']) + '</span>' : '') + '</div>'
+    + (place ? '<div class="muted">' + esc(place) + '</div>' : '')
+    + (o['Website'] ? '<div><a href="' + escA(o['Website']) + '" target="_blank" rel="noopener">' + esc(o['Website'].replace(/^https?:\/\//, '')) + '</a></div>' : '')
+    + (tags.length ? '<div class="row-tags">' + tags.map(t => '<span class="badge tag">' + esc(t) + '</span>').join('') + '</div>' : '')
+    + (last ? '<div class="small muted" style="margin-top:8px">Last contact ' + esc(fmtD(last)) + ' (' + esc(agoText(last)) + ')</div>' : '') + '</div>'
+    + '<div class="card"><div class="card-title">Contacts</div>' + (String(o['Contacts'] || '').trim() ? contactsHtml(o['Contacts']) : '<div class="muted">No contacts added yet.</div>') + '</div>'
+    + (o['About'] ? '<div class="card"><div class="card-title">About</div><div class="about-text">' + esc(o['About']) + '</div></div>' : '');
+  REG.orgSections.slice().sort((a, b) => a.order - b.order).forEach(s => { html += s.html(o); });
+  const menu = REG.orgActions.filter(a => a.placement === 'menu').sort((a, b) => a.order - b.order);
+  html += '<div class="card"><div class="meta">Added by ' + esc(o['Created By']) + ' · ' + esc(fmtD(o['Created On'])) + '</div>'
+    + '<div class="meta">Last updated by ' + esc(o['Last Updated By']) + ' · ' + esc(fmtD(o['Last Updated On'])) + '</div>'
+    + (menu.length && o['Record Status'] !== 'Archived' ? '<div class="meta-actions">' + menu.map(a => '<a class="link-btn" href="#/' + escA(a.route(o)) + '">' + esc(a.label) + '</a>').join('') + '</div>' : '') + '</div>';
+  const bar = o['Record Status'] === 'Archived' ? '' : REG.orgActions.filter(a => a.placement === 'bar').sort((a, b) => a.order - b.order)
+    .map(a => '<a class="btn' + (a.primary ? ' btn-primary' : '') + '" href="#/' + escA(a.route(o)) + '">' + esc(a.label) + '</a>').join('');
+  show(html, bar);
+  REG.orgSections.forEach(s => { if (s.wire) s.wire($('#view'), o); });
+};
+/* ==== END F03 ================================================================ */
+
+/* ==== BEGIN F04 — Add organisation =========================================== */
+/* @spec F04
+ * Feature: Add organisation
+ * Status: New
+ * Screen: Home > Add > Organisation
+ * Delta: New form and a duplicate warning. Entry point is registered in the Add menu; the form can be opened from an empty search with the typed name filled in.
+ * Validations: Form: Organisation name and Type are required; the page scrolls to the first missing field and nothing is saved. Website is accepted with or without https://. The server repeats every check.
+ * Calculations: Before saving, existing records with the same name (ignoring case and spaces) or the same website domain are listed with Open and Add anyway [CONFIRMED]. Org ID, stamps and the counter are set by the server on save [CONFIRMED]. After saving, the new organisation page opens [CONFIRMED].
+ * Dependencies: Org Master (Orgs, Lists); Members; shared form helper orgFormHtml.
+ * @end */
+REG.addMenu.push({ order: 1, label: 'New organisation', route: 'new-org' });
+REG.routes['new-org'] = function (args) {
+  page('New organisation');
+  show('<div id="f04dup"></div>' + orgFormHtml({ 'Org Name': args[0] || '' }), '<button class="btn btn-primary" id="f04save">Save organisation</button>');
+  $('#f04save').addEventListener('click', () => f04_save(false));
+};
+function f04_dupHtml(dups) {
+  return '<div class="dupbox"><div class="card-title" style="margin-bottom:8px">Already on the list?</div>'
+    + dups.map(d => '<a class="row" href="#/org/' + escA(d.orgId) + '"><div class="row-title">' + esc(d.name) + '</div><div class="row-sub">' + esc([d.type, d.city].filter(Boolean).join(' · ')) + (d.recordStatus === 'Archived' ? ' · archived' : '') + ' · same ' + esc(d.reason) + '</div></a>').join('')
+    + '<div class="btns"><button class="btn btn-primary" id="f04force">Add anyway</button></div></div>';
+}
+function f04_save(force) {
+  const root = $('#view'), btn = $('#f04save');
+  const miss = validateForm(root);
+  if (miss) { barError(miss); return; }
+  runSave(btn, async () => {
+    const org = readForm(root);
+    const d = await api('addOrg', { by: S.me, org: org, force: !!force }, true);
+    if (d.duplicates) {
+      $('#f04dup').innerHTML = f04_dupHtml(d.duplicates);
+      $('#f04force').addEventListener('click', () => f04_save(true));
+      $('#f04dup').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    upsert(S.orgs, 'Org ID', d.org); reindex();
+    confirmed('Saved. ' + d.org['Org Name'] + ' is on the list.', '');
+    replace('org/' + d.org['Org ID']);
+  });
+}
+/* ==== END F04 ================================================================ */
+
+/* ==== BEGIN F05 — Edit organisation ========================================== */
+/* @spec F05
+ * Feature: Edit organisation
+ * Status: New
+ * Screen: Organisation page > Edit details
+ * Delta: New form, the same fields as Add organisation, filled with the saved values. Includes the Contacts and About text.
+ * Validations: Form: Organisation name and Type are required. The server repeats every check and refuses archived records.
+ * Calculations: Last Updated On and By are set by the server on every save [CONFIRMED]. Created On and By are not changed [CONFIRMED]. After saving, the organisation page opens [CONFIRMED].
+ * Dependencies: Org Master (Orgs, Lists); Members; shared form helper orgFormHtml.
+ * @end */
+REG.orgActions.push({ order: 1, placement: 'menu', label: 'Edit details', route: o => 'edit-org/' + o['Org ID'] });
+REG.routes['edit-org'] = function (args) {
+  const o = S.idx.org[args[0]];
+  page('Edit details');
+  if (!o || o['Record Status'] === 'Archived') { show('<div class="empty">This record cannot be edited.</div>'); return; }
+  show(orgFormHtml(o), '<button class="btn btn-primary" id="f05save">Save changes</button>');
+  $('#f05save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f05save'), async () => {
+      const d = await api('updateOrg', { by: S.me, orgId: o['Org ID'], fields: readForm(root) }, true);
+      upsert(S.orgs, 'Org ID', d.org); reindex();
+      confirmed('Saved.', 'The details are up to date.');
+      replace('org/' + o['Org ID']);
     });
   });
-  var owner = activeMember_(ctx, p.owner);
-  var start = cleanDate_(p.startDate || today_(ctx), 'the start date', true);
-  var link = httpsOrEmpty_(p.documentLink);
-  var stages = teamLists_(ctx).stage;
-  if (!stages.length) fail_('There are no stages set up in the Lists tab.');
-  var campaign = cleanCampaign_(ctx, p.campaignId, '');
-  var hist = stageHistoryTable_(ctx);
-  var ids = nextIds_(engT.rows, 'Engagement ID', 'ENG', 4, pids.length);
-  var ts = now_(ctx);
-  var objs = pids.map(function (pid, i) {
-    return {
-      'Engagement ID': ids[i], 'Org ID': orgId, 'Product ID': pid, 'Stage': stages[0], 'Owner': owner,
-      'Key Contact': str_(p.keyContact), 'Expectations': str_(p.expectations), 'Start Date': start,
-      'Stage Changed On': today_(ctx), 'Not Interested Reason': '', 'Revisit On': '', 'Document Link': link,
-      'Created On': ts, 'Created By': by, 'Campaign ID': campaign
-    };
-  });
-  appendObjs_(engT, objs);
-  logStageChanges_(ctx, hist, objs.map(function (o) { return { engagementId: o['Engagement ID'], from: '', to: stages[0], by: by }; }));
-  return { engagements: objs.map(pub_) };
-});
-// ==== END F07 ====
+};
+/* ==== END F05 ================================================================ */
 
-// ====================================================================
-// FEATURE BLOCK F08 — Update engagement (server side)
-// ====================================================================
+/* ==== BEGIN F06 — Mark organisation as duplicate ============================= */
+/* @spec F06
+ * Feature: Mark organisation as duplicate
+ * Status: New
+ * Screen: Organisation page > Mark as duplicate
+ * Delta: New screen to pick the record that replaces this one. Records are archived, never deleted or merged.
+ * Validations: Form: the replacement is required and is chosen from active organisations other than this one. The server repeats the checks.
+ * Calculations: After saving, the old record is hidden from search and lists and opening it shows the replacement; its engagements and interactions appear on the replacement [CONFIRMED].
+ * Dependencies: Org Master (Orgs); F03 (redirect and combined history).
+ * @end */
+REG.orgActions.push({ order: 2, placement: 'menu', label: 'Mark as duplicate', route: o => 'archive-org/' + o['Org ID'] });
+REG.routes['archive-org'] = function (args) {
+  const o = S.idx.org[args[0]];
+  page('Mark as duplicate');
+  if (!o || o['Record Status'] === 'Archived') { show('<div class="empty">This record cannot be changed.</div>'); return; }
+  const items = f02_active().filter(x => x['Org ID'] !== o['Org ID']).sort((a, b) => a['Org Name'].localeCompare(b['Org Name'])).map(x => ({ v: x['Org ID'], l: x['Org Name'], s: [x['Org Type'], x['City']].filter(Boolean).join(' · ') }));
+  show('<div class="card"><div class="org-name">' + esc(o['Org Name']) + '</div><div class="muted">is the same as…</div><div style="margin-top:12px">'
+    + fCombo('archivedTo', 'Keep this record instead', items, { req: true, placeholder: 'Search organisations' }) + '</div></div>',
+    '<button class="btn btn-primary" id="f06save">Mark as duplicate</button>');
+  $('#f06save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f06save'), async () => {
+      const to = readForm(root)['archivedTo'];
+      const d = await api('archiveOrg', { by: S.me, orgId: o['Org ID'], archivedTo: to }, true);
+      upsert(S.orgs, 'Org ID', d.org); reindex();
+      confirmed('Done.', 'Everything now shows under ' + orgName(to) + '.');
+      replace('org/' + to);
+    });
+  });
+};
+/* ==== END F06 ================================================================ */
+
+
+/* ==== BEGIN F07 — Add engagements ============================================ */
+/* @spec F07
+ * Feature: Add engagements
+ * Status: Modified in v5
+ * Screen: Organisation page > Add engagement
+ * Delta: New form. Several products can be ticked in one save, which creates one engagement per product. Products that already have an engagement with this organisation are shown crossed out and cannot be ticked. In v2 products come from the Products tab of the company sheet (the Manage products screen was removed). In v5 an optional Campaign choice is added (see F21), and a new engagement starts at the first stage in the Lists tab instead of a fixed stage.
+ * Validations: Form: at least one product, an owner and a start date are required. Only active products are offered. Key contact, expectations, the document link and the campaign are optional. The server repeats every check, including one engagement per organisation and product.
+ * Calculations: Stage starts as the first stage in Lists > Stage [CONFIRMED]. The owner defaults to the person using the tool [CONFIRMED]. Start date defaults to today [CONFIRMED]. After saving, the organisation page opens [CONFIRMED].
+ * Dependencies: Products (typed in the company sheet); Members; Engagements; F21 (campaign choice).
+ * @end */
+REG.orgActions.push({ order: 2, placement: 'bar', label: 'Add engagement', route: o => 'add-eng/' + o['Org ID'] });
+REG.routes['add-eng'] = function (args) {
+  const o = S.idx.org[args[0]];
+  page('Add engagement');
+  if (!o || o['Record Status'] === 'Archived') { show('<div class="empty">This organisation cannot take new engagements.</div>'); return; }
+  const prods = S.products.filter(p => isYes(p['Active']));
+  if (!prods.length) { show('<div class="empty">There are no active products yet.</div>'); return; }
+  const taken = (S.idx.engByOrg[o['Org ID']] || []).map(e => e['Product ID']);
+  show('<div class="card"><div class="org-name">' + esc(o['Org Name']) + '</div>'
+    + fChips('Products', 'Products or services', prods.map(p => ({ v: p['Product ID'], l: p['Product Name'], disabled: taken.indexOf(p['Product ID']) >= 0 })), { multi: true, req: true })
+    + fChoice('Owner', 'Owner', activeNames(), { req: true, value: S.me })
+    + (typeof f21_field === 'function' ? f21_field('') : '')
+    + fText('Key Contact', 'Key contact', { placeholder: 'Name and role' })
+    + fText('Expectations', 'What do they expect?', { area: true, rows: 3 })
+    + fDate('Start Date', 'First discussed on', { req: true, value: todayStr() })
+    + fText('Document Link', 'Document link', { type: 'url', placeholder: 'https://' }) + '</div>',
+    '<button class="btn btn-primary" id="f07save">Save</button>');
+  $('#f07save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f07save'), async () => {
+      const f = readForm(root);
+      const d = await api('addEngagements', { by: S.me, orgId: o['Org ID'], productIds: f['Products'], owner: f['Owner'], keyContact: f['Key Contact'], expectations: f['Expectations'], startDate: f['Start Date'], documentLink: f['Document Link'], campaignId: f['Campaign ID'] || '' }, true);
+      d.engagements.forEach(e => upsert(S.engagements, 'Engagement ID', e)); reindex();
+      confirmed('Added.', plural(d.engagements.length, 'engagement') + ' started for ' + o['Org Name'] + '.');
+      replace('org/' + o['Org ID']);
+    });
+  });
+};
+/* ==== END F07 ================================================================ */
+
+/* ==== BEGIN F08 — Engagement page and update ================================= */
 /* @spec F08
- * Validations: Server checks: Stage must be in Lists (Company) > Stage. A changed Owner must be an active member. Start Date and Revisit On must be valid dates, and Revisit On cannot be earlier than Start Date. Document Link, if given, must be a web address. A changed Campaign ID follows F21. Org ID and Product ID cannot be changed. Saved by must be an active member.
- * Calculations: Stage Changed On is set to today whenever Stage changes [CONFIRMED]. A Stage History row is added whenever Stage changes (see F22) [CONFIRMED]. Not Interested Reason and Revisit On are kept as saved when the stage later changes; they are not cleared automatically [CONFIRMED].
- * Dependencies: Engagements; Lists (Company): Stage; Members; Campaigns; Stage History.
+ * Feature: Engagement page and update
+ * Status: Modified in v5
+ * Screen: Organisation page > Engagements; Engagement page; Engagement page > Edit
+ * Delta: New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page. In v5 the stages and their order come from the Lists tab, the colour of each stage badge follows its Stage Kind, the campaign is shown and can be changed (see F21), and a stage change is logged (see F22).
+ * Validations: Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the chosen stage has the Kind Lost. The server repeats every check.
+ * Calculations: Tapping a stage saves it at once and sets Stage Changed On to today; tapping a Lost stage opens the edit form so the reason can be added [CONFIRMED]. Last contact is the latest interaction Date for the engagement [CONFIRMED]. An engagement is flagged Going cold when its stage Kind is Open, it is not at the first stage in the list, and the days since its last interaction (or its start date if there is none) exceed Stale After Days [CONFIRMED]. Won and Lost engagements, and engagements still at the first stage, are never flagged [CONFIRMED]. Engagements on the organisation page are ordered Open stages first, then Won, then Lost, each in the order of the Lists tab, newest start first [CONFIRMED]. Badge colours: first stage soft purple, other Open stages solid purple, Won green, Lost grey [CONFIRMED].
+ * Dependencies: Engagements; Products; Interactions; Lists (Company): Stage, Stage Kind; Config: Stale After Days; Members; Campaigns.
  * @end */
-defAction_('updateEngagement', true, function (ctx, p) {
-  var by = activeMember_(ctx, p.by);
-  var t = readTable_(sheet_(ctx.ss, 'Engagements'));
-  var row = findRow_(t, 'Engagement ID', str_(p.engagementId), 'That engagement');
-  var f = p.fields || {}, patch = {}, entries = [], hist = null;
-  function has(k) { return Object.prototype.hasOwnProperty.call(f, k); }
-  if (has('Stage')) {
-    var st = str_(f['Stage']);
-    if (teamLists_(ctx).stage.indexOf(st) < 0) fail_('That stage is not in the list.');
-    patch['Stage'] = st;
-    if (st !== row['Stage']) {
-      patch['Stage Changed On'] = today_(ctx);
-      hist = stageHistoryTable_(ctx);
-      entries.push({ engagementId: row['Engagement ID'], from: row['Stage'], to: st, by: by });
-    }
+function f08_order(e) {
+  const r = { Open: 0, Won: 1, Lost: 2 }[kindOf(e['Stage'])];
+  if (r === undefined) return 900;
+  return r * 100 + Math.max(S.lists.stage.indexOf(e['Stage']), 0);
+}
+REG.orgSections.push({
+  order: 20,
+  html: o => {
+    const es = (S.idx.engByOrg[o['Org ID']] || []).slice().sort((a, b) => (f08_order(a) - f08_order(b)) || b['Start Date'].localeCompare(a['Start Date']));
+    return '<div class="card"><div class="card-title">Engagements</div>' + (es.length
+      ? '<div class="list" style="box-shadow:none;border:none;margin:0">' + es.map(e => {
+        const last = S.idx.lastByEng[e['Engagement ID']];
+        return '<a class="row" href="#/eng/' + escA(e['Engagement ID']) + '"><div class="row-top"><div><div class="row-title">' + esc(engLabel(e)) + '</div><div class="row-sub">' + esc(e['Owner']) + ' · ' + (last ? 'Last contact ' + esc(agoText(last)) : 'No contact yet') + '</div></div><div class="row-tags" style="margin:0">' + stageBadge(e['Stage']) + (isStale(e) ? coldBadge() : '') + '</div></div></a>';
+      }).join('') + '</div>' : '<div class="muted">No engagements yet.</div>') + '</div>';
   }
-  if (has('Owner') && str_(f['Owner']) !== row['Owner']) patch['Owner'] = activeMember_(ctx, f['Owner']);
-  ['Key Contact', 'Expectations', 'Not Interested Reason'].forEach(function (k) { if (has(k)) patch[k] = str_(f[k]); });
-  var start = row['Start Date'];
-  if (has('Start Date')) { start = cleanDate_(f['Start Date'], 'the start date', true); patch['Start Date'] = start; }
-  if (has('Revisit On')) {
-    var rv = cleanDate_(f['Revisit On'], 'the revisit date', false);
-    if (rv && start && rv < start) fail_('The revisit date cannot be earlier than the start date.');
-    patch['Revisit On'] = rv;
-  }
-  if (has('Document Link')) patch['Document Link'] = httpsOrEmpty_(f['Document Link']);
-  if (has('Campaign ID')) patch['Campaign ID'] = cleanCampaign_(ctx, f['Campaign ID'], row['Campaign ID']);
-  writeRow_(t, row._row, patch);
-  Object.keys(patch).forEach(function (k) { row[k] = patch[k]; });
-  if (hist) logStageChanges_(ctx, hist, entries);
-  return { engagement: pub_(row) };
 });
-// ==== END F08 ====
+REG.routes.eng = function (args) {
+  const e = S.idx.eng[args[0]];
+  page(e ? engLabel(e) : 'Engagement', true, refreshBtn());
+  if (!e) { show('<div class="empty">That engagement could not be found.</div>'); return; }
+  const rid = resolveOrgId(e['Org ID']);
+  const last = S.idx.lastByEng[e['Engagement ID']];
+  const ints = S.idx.intByEng[e['Engagement ID']] || [];
+  const lost = isLost(e['Stage']);
+  const rows = [['Owner', esc(e['Owner'])], ['Key contact', esc(e['Key Contact'] || '—')], ['First discussed', esc(fmtD(e['Start Date']))],
+    ['Stage since', esc(fmtD(e['Stage Changed On']))], ['Last contact', last ? esc(fmtD(last)) + ' (' + esc(agoText(last)) + ')' : 'None yet']];
+  if (e['Campaign ID']) rows.push(['Campaign', esc(campaignName(e['Campaign ID']))]);
+  if (lost) { rows.push(['Reason', esc(e['Not Interested Reason'] || '—')]); rows.push(['Revisit on', e['Revisit On'] ? esc(fmtD(e['Revisit On'])) : '—']); }
+  if (e['Document Link']) rows.push(['Document', '<a href="' + escA(e['Document Link']) + '" target="_blank" rel="noopener">Open</a>']);
+  const html = '<div class="card"><div class="org-name">' + esc(engLabel(e)) + '</div><div><a href="#/org/' + escA(rid) + '">' + esc(orgName(rid)) + '</a></div>'
+    + '<div class="badges">' + stageBadge(e['Stage']) + (isStale(e) ? coldBadge() : '') + '</div>'
+    + '<div class="field-label" style="margin:12px 0 8px">Change stage</div><div style="display:flex;flex-wrap:wrap;gap:8px">'
+    + S.lists.stage.map(st => '<button class="chip' + (st === e['Stage'] ? ' selected' : '') + '" data-act="f08.stage" data-id="' + escA(e['Engagement ID']) + '" data-v="' + escA(st) + '">' + esc(st) + '</button>').join('') + '</div></div>'
+    + '<div class="card"><dl class="kv">' + rows.map(r => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl></div>'
+    + (e['Expectations'] ? '<div class="card"><div class="card-title">Expectations</div><div class="about-text">' + esc(e['Expectations']) + '</div></div>' : '')
+    + '<div class="card"><div class="card-title">Interactions</div>' + (ints.length ? ints.map(i => intRowHtml(i)).join('') : '<div class="muted">Nothing logged yet.</div>') + '</div>';
+  show(html, (REG.routes.log ? '<a class="btn btn-primary" href="#/log/' + escA(rid) + '/' + escA(e['Engagement ID']) + '">Log interaction</a>' : '') + '<a class="btn" href="#/edit-eng/' + escA(e['Engagement ID']) + '">Edit</a>');
+};
+REG.acts['f08.stage'] = async el => {
+  const id = el.dataset.id, st = el.dataset.v, e = S.idx.eng[id];
+  if (!e || st === e['Stage']) return;
+  if (isLost(st)) { go('edit-eng/' + id + '/' + encodeURIComponent(st)); return; }
+  try {
+    const d = await api('updateEngagement', { by: S.me, engagementId: id, fields: { Stage: st } }, true);
+    upsert(S.engagements, 'Engagement ID', d.engagement); reindex(); REG.routes.eng([id]); toast('Stage is now ' + st + '.');
+  } catch (err) { toast(err.message); }
+};
+REG.routes['edit-eng'] = function (args) {
+  const e = S.idx.eng[args[0]];
+  page('Edit engagement');
+  if (!e) { show('<div class="empty">That engagement could not be found.</div>'); return; }
+  const stage = (args[1] && S.lists.stage.indexOf(args[1]) >= 0) ? args[1] : e['Stage'];
+  const names = activeNames(); if (names.indexOf(e['Owner']) < 0) names.push(e['Owner']);
+  const stages = S.lists.stage.slice(); if (stages.indexOf(e['Stage']) < 0) stages.push(e['Stage']);
+  show('<div class="card"><div class="org-name">' + esc(engLabel(e)) + '</div><div class="muted" style="margin-bottom:14px">' + esc(orgName(resolveOrgId(e['Org ID']))) + '</div>'
+    + fChoice('Stage', 'Stage', stages, { req: true, value: stage })
+    + fText('Not Interested Reason', 'Reason', { value: e['Not Interested Reason'], cond: 'lost', hidden: !isLost(stage), area: true, rows: 2 })
+    + fDate('Revisit On', 'Revisit on', { value: e['Revisit On'], cond: 'lost', hidden: !isLost(stage), min: e['Start Date'] })
+    + fChoice('Owner', 'Owner', names, { req: true, value: e['Owner'] })
+    + (typeof f21_field === 'function' ? f21_field(e['Campaign ID']) : '')
+    + fText('Key Contact', 'Key contact', { value: e['Key Contact'] })
+    + fText('Expectations', 'What do they expect?', { value: e['Expectations'], area: true, rows: 3 })
+    + fDate('Start Date', 'First discussed on', { req: true, value: e['Start Date'] })
+    + fText('Document Link', 'Document link', { value: e['Document Link'], type: 'url', placeholder: 'https://' }) + '</div>',
+    '<button class="btn btn-primary" id="f08save">Save changes</button>');
+  const root = $('#view');
+  const onStage = v => $$('.field[data-cond]', root).forEach(w => { w.hidden = !isLost(v); });
+  root.addEventListener('chipchange', ev => { if (ev.target.closest('[data-f="Stage"]')) onStage(ev.detail.v); });
+  root.addEventListener('change', ev => { if (ev.target.matches('[data-f="Stage"] select')) onStage(ev.target.value); });
+  $('#f08save').addEventListener('click', () => {
+    const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    runSave($('#f08save'), async () => {
+      const d = await api('updateEngagement', { by: S.me, engagementId: e['Engagement ID'], fields: readForm(root) }, true);
+      upsert(S.engagements, 'Engagement ID', d.engagement); reindex();
+      confirmed('Saved.', 'The engagement is up to date.');
+      replace('eng/' + e['Engagement ID']);
+    });
+  });
+};
+/* ==== END F08 ================================================================ */
 
-// ====================================================================
-// FEATURE BLOCK F10 — Log interaction (server side)
-// ====================================================================
+/* ==== BEGIN F09 — Engagements work list ====================================== */
+/* @spec F09
+ * Feature: Engagements work list
+ * Status: Modified in v5
+ * Screen: Home > Engagements
+ * Delta: New home tab listing the company's engagements with owner and stage filters and a Going cold flag. In v5 Open means every stage whose Kind is Open, instead of two fixed stage names.
+ * Validations: Form: none; both filters are optional.
+ * Calculations: The Owner filter starts as the person using the tool and can be set to All or another person [CONFIRMED]. The Stage filter starts as Open (every stage with the Kind Open) and can be set to All or a single stage [CONFIRMED]. Going cold rows are listed first, then the longest since last contact first [CONFIRMED]. Each row shows the days since the last contact, or No contact yet [CONFIRMED].
+ * Dependencies: Engagements; Interactions; Products; Lists (Company): Stage, Stage Kind; Config: Stale After Days; F08 (row opens the engagement page).
+ * @end */
+const F09 = { owner: null, stage: 'open' };
+REG.homeTabs.push({ id: 'eng', label: 'Engagements', order: 2, render: f09_render });
+function f09_render(host) {
+  if (F09.owner === null) F09.owner = S.me;
+  const owners = Array.from(new Set(activeNames().concat(S.engagements.map(e => e['Owner'])))).sort((a, b) => a.localeCompare(b));
+  host.innerHTML = '<div class="filter-panel" style="margin-bottom:10px">'
+    + '<div class="field"><label class="field-label">Owner</label><select id="f09owner"><option value="">All</option>' + owners.map(n => '<option' + (n === F09.owner ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div>'
+    + '<div class="field"><label class="field-label">Stage</label><select id="f09stage"><option value="open"' + (F09.stage === 'open' ? ' selected' : '') + '>Open</option><option value="all"' + (F09.stage === 'all' ? ' selected' : '') + '>All</option>'
+    + S.lists.stage.map(s => '<option' + (s === F09.stage ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select></div></div>'
+    + '<div class="count-line" id="f09count"></div><div id="f09list"></div>';
+  $('#f09owner').addEventListener('change', e => { F09.owner = e.target.value; f09_list(); });
+  $('#f09stage').addEventListener('change', e => { F09.stage = e.target.value; f09_list(); });
+  f09_list();
+}
+function f09_list() {
+  const rows = S.engagements.filter(e => (!F09.owner || e['Owner'] === F09.owner) && (F09.stage === 'all' || (F09.stage === 'open' ? isOpen(e['Stage']) : e['Stage'] === F09.stage)))
+    .map(e => { const last = S.idx.lastByEng[e['Engagement ID']]; return { e: e, cold: isStale(e), since: daysBetween(last || e['Start Date'], todayStr()), last: last, org: orgName(resolveOrgId(e['Org ID'])) }; })
+    .sort((a, b) => (b.cold - a.cold) || (b.since - a.since) || a.org.localeCompare(b.org));
+  $('#f09count').textContent = plural(rows.length, 'engagement');
+  $('#f09list').innerHTML = rows.length ? '<div class="list">' + rows.map(r => '<a class="row" href="#/eng/' + escA(r.e['Engagement ID']) + '"><div class="row-top"><div><div class="row-title">' + esc(r.org) + ' — ' + esc(engLabel(r.e)) + '</div>'
+    + '<div class="row-sub">' + esc(r.e['Owner']) + ' · ' + (r.last ? 'Last contact ' + esc(agoText(r.last)) : 'No contact yet') + '</div></div><div class="row-tags" style="margin:0">' + stageBadge(r.e['Stage']) + (r.cold ? coldBadge() : '') + '</div></div></a>').join('') + '</div>'
+    : '<div class="empty">Nothing here.</div>';
+}
+/* ==== END F09 ================================================================ */
+
+/* ==== BEGIN F10 — Log interaction ============================================ */
 /* @spec F10
- * Validations: Server checks: the organisation must exist (archived resolves to its replacement). If an engagement is given it must belong to the same organisation. Date is required, a valid date and not later than today. Type must be in Lists (Company) > Interaction Type. Logged By must be an active member. Summary is required. Follow-up Date, if given, is a valid date and not earlier than Date.
- * Calculations: Interaction ID is the highest existing number plus 1, written as INT- plus 4 digits, under a script lock [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. Created On is set on save [CONFIRMED]. Summary and Next Step keep their line breaks as typed [CONFIRMED].
+ * Feature: Log interaction
+ * Status: Modified in v2
+ * Screen: Home > Add > Log interaction; Organisation page > Log interaction; Engagement page > Log interaction
+ * Delta: New form and a new Interactions list on the organisation page (latest five, with Show all). An interaction belongs to the organisation, with the engagement optional. In v2 the Next step box is multi-line, like What happened, and line breaks are shown as typed on the organisation, engagement and follow-up screens.
+ * Validations: Form: organisation (when not already chosen), date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The engagement choice lists only this organisation's engagements. The server repeats every check.
+ * Calculations: Date defaults to today and Logged by to the person using the tool [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. After saving, the engagement page opens when the form was started from an engagement, otherwise the organisation page [CONFIRMED].
  * Dependencies: Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members.
  * @end */
-defAction_('addInteraction', true, function (ctx, p) {
-  var by = activeMember_(ctx, p.loggedBy);
-  var orgRows = loadOrgRows_(ctx);
-  var orgId = resolveOrg_(orgRows, str_(p.orgId));
-  var engId = str_(p.engagementId);
-  if (engId) {
-    var eng = findRow_(readTable_(sheet_(ctx.ss, 'Engagements')), 'Engagement ID', engId, 'That engagement');
-    var eo;
-    try { eo = resolveOrg_(orgRows, eng['Org ID']); } catch (x) { eo = eng['Org ID']; }
-    if (eo !== orgId) fail_('That engagement belongs to a different organisation.');
+REG.addMenu.push({ order: 2, label: 'Log interaction', route: 'log' });
+REG.orgActions.push({ order: 1, placement: 'bar', primary: true, label: 'Log interaction', route: o => 'log/' + o['Org ID'] });
+function f10_engOptions(orgId) {
+  return (S.idx.engByOrg[orgId] || []).slice().sort((a, b) => f08_order(a) - f08_order(b)).map(e => ({ v: e['Engagement ID'], l: engLabel(e) + ' (' + e['Stage'] + ')' }));
+}
+function f10_fillEng(orgId, selected) {
+  const w = $('.field[data-f="Engagement ID"]'); if (!w) return;
+  const opts = f10_engOptions(orgId);
+  $('select', w).innerHTML = '<option value="">General, no specific product</option>' + opts.map(x => '<option value="' + escA(x.v) + '"' + (x.v === selected ? ' selected' : '') + '>' + esc(x.l) + '</option>').join('');
+  w.hidden = !opts.length;
+}
+REG.routes.log = function (args) {
+  const fixed = args[0] ? resolveOrgId(args[0]) : '';
+  const engId = args[1] || '';
+  page('Log interaction');
+  const items = activeOrgs().sort((a, b) => a['Org Name'].localeCompare(b['Org Name'])).map(o => ({ v: o['Org ID'], l: o['Org Name'], s: [o['Org Type'], o['City']].filter(Boolean).join(' · ') }));
+  show('<div class="card">'
+    + (fixed ? '<div class="org-name">' + esc(orgName(fixed)) + '</div>' : fCombo('Org', 'Organisation', items, { req: true, placeholder: 'Search organisations' }))
+    + fSelect('Engagement ID', 'About which product?', [], { blank: 'General, no specific product' })
+    + fDate('Date', 'Date', { req: true, value: todayStr(), max: todayStr() })
+    + fChoice('Type', 'How were you in touch?', S.lists.interactionType, { req: true })
+    + fText('Spoke With', 'Spoke with')
+    + fChoice('Logged By', 'Logged by', activeNames(), { req: true, value: S.me })
+    + fText('Summary', 'What happened?', { req: true, area: true, rows: 4 })
+    + fText('Next Step', 'Next step', { area: true, rows: 3 })
+    + fDate('Follow-up Date', 'Follow up on', { min: todayStr() }) + '</div>',
+    '<button class="btn btn-primary" id="f10save">Save</button>');
+  f10_fillEng(fixed, engId);
+  $('#view').addEventListener('combochange', ev => { if (ev.target.closest('[data-f="Org"]')) f10_fillEng(ev.detail.v, ''); });
+  $('#f10save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    const f = readForm(root), orgId = fixed || f['Org'];
+    if (f['Follow-up Date'] && f['Follow-up Date'] < f['Date']) { barError('The follow-up date cannot be earlier than the date of contact.'); return; }
+    runSave($('#f10save'), async () => {
+      const d = await api('addInteraction', { loggedBy: f['Logged By'], orgId: orgId, engagementId: f['Engagement ID'] || '', date: f['Date'], type: f['Type'], spokeWith: f['Spoke With'], summary: f['Summary'], nextStep: f['Next Step'], followUpDate: f['Follow-up Date'] }, true);
+      upsert(S.interactions, 'Interaction ID', d.interaction); reindex();
+      confirmed('Logged. Thank you.', '');
+      replace(engId ? 'eng/' + engId : 'org/' + resolveOrgId(orgId));
+    });
+  });
+};
+REG.orgSections.push({
+  order: 30,
+  html: o => {
+    const list = S.idx.intByOrg[o['Org ID']] || [];
+    const all = S.ui.showAllInt === o['Org ID'];
+    const shown = all ? list : list.slice(0, 5);
+    return '<div class="card"><div class="card-title">Interactions' + (list.length > 5 ? '<button class="link-btn" data-act="f10.toggle" data-id="' + escA(o['Org ID']) + '">' + (all ? 'Show fewer' : 'Show all ' + list.length) + '</button>' : '') + '</div>'
+      + (shown.length ? shown.map(i => intRowHtml(i)).join('') : '<div class="muted">Nothing logged yet.</div>') + '</div>';
   }
-  var date = cleanDate_(p.date, 'the date', true);
-  if (date > today_(ctx)) fail_('The date cannot be later than today.');
-  var type = str_(p.type);
-  if (teamLists_(ctx).interactionType.indexOf(type) < 0) fail_('Please choose how you were in touch.');
-  var summary = str_(p.summary);
-  if (!summary) fail_('Please write a short summary of what happened.');
-  var fu = cleanDate_(p.followUpDate, 'the follow-up date', false);
-  if (fu && fu < date) fail_('The follow-up date cannot be earlier than the date of contact.');
-  var t = readTable_(sheet_(ctx.ss, 'Interactions'));
-  var o = {
-    'Interaction ID': nextIds_(t.rows, 'Interaction ID', 'INT', 4, 1)[0], 'Org ID': orgId, 'Engagement ID': engId,
-    'Date': date, 'Type': type, 'Spoke With': str_(p.spokeWith), 'Logged By': by, 'Summary': summary,
-    'Next Step': str_(p.nextStep), 'Follow-up Date': fu, 'Follow-up Done': '', 'Created On': now_(ctx)
-  };
-  appendObjs_(t, [o]);
-  return { interaction: pub_(o) };
 });
-// ==== END F10 ====
+REG.acts['f10.toggle'] = el => { S.ui.showAllInt = S.ui.showAllInt === el.dataset.id ? '' : el.dataset.id; REG.routes.org([el.dataset.id]); };
+/* ==== END F10 ================================================================ */
 
-// ====================================================================
-// FEATURE BLOCK F11 — Follow-ups due (server side)
-// ====================================================================
+/* ==== BEGIN F11 — Follow-ups due ============================================= */
 /* @spec F11
- * Validations: Server checks: the interaction must exist and must have a Follow-up Date. Saved by must be an active member.
- * Calculations: Marking done sets Follow-up Done to Yes; un-marking clears it [CONFIRMED].
- * Dependencies: Interactions.
+ * Feature: Follow-ups due
+ * Status: New
+ * Screen: Home > Follow-ups
+ * Delta: New home tab listing open follow-ups with an owner filter and a Done button on each.
+ * Validations: Form: none; the owner filter is optional.
+ * Calculations: A follow-up is open when an interaction has a Follow-up Date and Follow-up Done is not Yes [CONFIRMED]. It is overdue when the date is before today [CONFIRMED]. The list shows overdue items first, then by date [CONFIRMED]. The owner of a follow-up is the owner of its engagement, or the person who logged it when there is no engagement [CONFIRMED]. The Owner filter starts as the person using the tool [CONFIRMED]. Done marks the follow-up as done and removes it from the list [CONFIRMED].
+ * Dependencies: Interactions; Engagements; Org Master (Orgs).
  * @end */
-defAction_('setFollowupDone', true, function (ctx, p) {
-  activeMember_(ctx, p.by);
-  var t = readTable_(sheet_(ctx.ss, 'Interactions'));
-  var row = findRow_(t, 'Interaction ID', str_(p.interactionId), 'That interaction');
-  if (!row['Follow-up Date']) fail_('This interaction has no follow-up date.');
-  var v = p.done ? 'Yes' : '';
-  writeRow_(t, row._row, { 'Follow-up Done': v });
-  row['Follow-up Done'] = v;
-  return { interaction: pub_(row) };
-});
-// ==== END F11 ====
+const F11 = { owner: null };
+REG.homeTabs.push({ id: 'fu', label: 'Follow-ups', order: 3, render: f11_render });
+function f11_items() {
+  return S.interactions.filter(i => i['Follow-up Date'] && !isYes(i['Follow-up Done'])).map(i => {
+    const e = i['Engagement ID'] ? S.idx.eng[i['Engagement ID']] : null;
+    return { i: i, e: e, owner: e ? e['Owner'] : i['Logged By'], org: resolveOrgId(i['Org ID']) };
+  });
+}
+function f11_render(host) {
+  if (F11.owner === null) F11.owner = S.me;
+  const owners = Array.from(new Set(activeNames().concat(f11_items().map(x => x.owner)))).sort((a, b) => a.localeCompare(b));
+  host.innerHTML = '<div class="filter-panel" style="grid-template-columns:1fr;margin-bottom:10px"><div class="field"><label class="field-label">Owner</label><select id="f11owner"><option value="">All</option>'
+    + owners.map(n => '<option' + (n === F11.owner ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div></div><div class="count-line" id="f11count"></div><div id="f11list"></div>';
+  $('#f11owner').addEventListener('change', e => { F11.owner = e.target.value; f11_list(); });
+  f11_list();
+}
+function f11_list() {
+  const rows = f11_items().filter(x => !F11.owner || x.owner === F11.owner)
+    .sort((a, b) => a.i['Follow-up Date'].localeCompare(b.i['Follow-up Date']) || orgName(a.org).localeCompare(orgName(b.org)));
+  $('#f11count').textContent = plural(rows.length, 'follow-up');
+  $('#f11list').innerHTML = rows.length ? '<div class="list">' + rows.map(x => {
+    const late = x.i['Follow-up Date'] < todayStr();
+    const due = late ? 'Overdue by ' + plural(daysBetween(x.i['Follow-up Date'], todayStr()), 'day') : 'Due ' + fmtD(x.i['Follow-up Date']);
+    return '<div class="row"><div class="row-top"><a href="#/' + (x.e ? 'eng/' + escA(x.e['Engagement ID']) : 'org/' + escA(x.org)) + '" style="flex:1;min-width:0;text-decoration:none;color:inherit">'
+      + '<div class="row-title">' + esc(orgName(x.org)) + (x.e ? ' — ' + esc(engLabel(x.e)) : '') + '</div>'
+      + '<div class="row-sub"><span class="' + (late ? 'overdue' : '') + '">' + esc(due) + '</span> · ' + esc(x.owner) + '</div>'
+      + (x.i['Next Step'] ? '<div class="pre">' + esc(x.i['Next Step']) + '</div>' : '') + '<div class="small muted">' + esc(x.i['Summary'].slice(0, 110)) + (x.i['Summary'].length > 110 ? '…' : '') + '</div></a>'
+      + '<button class="btn btn-sm" data-act="f11.done" data-id="' + escA(x.i['Interaction ID']) + '">Done</button></div></div>';
+  }).join('') + '</div>' : '<div class="empty">No follow-ups waiting.</div>';
+}
+REG.acts['f11.done'] = async el => {
+  try {
+    const d = await api('setFollowupDone', { by: S.me, interactionId: el.dataset.id, done: true }, true);
+    upsert(S.interactions, 'Interaction ID', d.interaction); reindex(); f11_list(); toast('Marked done.');
+  } catch (err) { toast(err.message); }
+};
+/* ==== END F11 ================================================================ */
 
 
-// (F12 Manage products was removed in v2: products are typed in the company
-//  sheet. The number F12 is retired and is not reused.)
+/* (F12 Manage products was removed in v2: products are typed in the company
+    sheet. The number F12 is retired and is not reused.) */
 
-// ====================================================================
-// FEATURE BLOCK F13 — Bulk reassign (server side)
-// ====================================================================
+/* ==== BEGIN F13 — Hand over engagements (bulk reassign) ====================== */
 /* @spec F13
- * Validations: Server checks: at least one engagement must be chosen. The new owner must be an active member and different from the current owner. Every chosen engagement must currently be owned by the person named as the current owner. Saved by must be an active member.
- * Calculations: Owner is changed on every chosen engagement in one save; other fields and Stage Changed On are not touched [CONFIRMED]. Which engagements are chosen is decided on the screen: engagements whose stage Kind is Open are ticked by default, Won and Lost are unticked [CONFIRMED].
- * Dependencies: Engagements; Members.
+ * Feature: Hand over engagements
+ * Status: Modified in v5
+ * Screen: Settings > Hand over engagements
+ * Delta: New screen to move engagements from one owner to another in one save. In v5 the engagements ticked by default are those whose stage Kind is Open, instead of two fixed stage names.
+ * Validations: Form: a new owner and at least one ticked engagement are required. The new owner is chosen from active members other than the current owner. The server repeats the checks.
+ * Calculations: The list shows every engagement owned by the chosen person; engagements at an Open stage are ticked by default and Won and Lost ones are not [CONFIRMED]. Only Owner changes; stages and dates are untouched [CONFIRMED].
+ * Dependencies: Engagements; Members; Lists (Company): Stage, Stage Kind.
  * @end */
-defAction_('bulkReassign', true, function (ctx, p) {
-  activeMember_(ctx, p.by);
-  var to = activeMember_(ctx, p.to);
-  var from = str_(p.from);
-  if (to === from) fail_('Please choose a different person to hand over to.');
-  var ids = (p.engagementIds || []).map(str_).filter(function (x) { return x; });
-  if (!ids.length) fail_('Please choose at least one engagement.');
-  var t = readTable_(sheet_(ctx.ss, 'Engagements'));
-  var rows = ids.map(function (id) {
-    var r = findRow_(t, 'Engagement ID', id, 'An engagement');
-    if (r['Owner'] !== from) fail_('The owner of ' + id + ' has changed. Please reload and try again.');
-    return r;
+REG.settingsItems.push({ group: 'Team', order: 1, label: 'Hand over engagements', route: 'reassign' });
+const F13 = { from: '' };
+REG.routes.reassign = function () {
+  page('Hand over engagements');
+  const owners = Array.from(new Set(S.engagements.map(e => e['Owner']))).sort((a, b) => a.localeCompare(b));
+  if (!owners.length) { show('<div class="empty">There are no engagements yet.</div>'); return; }
+  if (owners.indexOf(F13.from) < 0) F13.from = owners.indexOf(S.me) >= 0 ? S.me : owners[0];
+  const list = S.engagements.filter(e => e['Owner'] === F13.from).sort((a, b) => (f08_order(a) - f08_order(b)) || orgName(resolveOrgId(a['Org ID'])).localeCompare(orgName(resolveOrgId(b['Org ID']))));
+  const to = activeNames().filter(n => n !== F13.from);
+  show('<div class="card"><div class="field"><label class="field-label">From</label><select id="f13from">'
+    + owners.map(n => '<option value="' + escA(n) + '"' + (n === F13.from ? ' selected' : '') + '>' + esc(n) + ' (' + S.engagements.filter(e => e['Owner'] === n).length + ')</option>').join('') + '</select></div>'
+    + fChoice('To', 'To', to, { req: true }) + '</div>'
+    + '<div class="card" id="f13list"><div class="card-title">Engagements</div>' + list.map(e => '<label class="check-row"><input type="checkbox" value="' + escA(e['Engagement ID']) + '"' + (isOpen(e['Stage']) ? ' checked' : '') + '>'
+      + '<div class="grow"><div class="row-title">' + esc(orgName(resolveOrgId(e['Org ID']))) + '</div><div class="row-sub">' + esc(engLabel(e)) + '</div></div>' + stageBadge(e['Stage']) + '</label>').join('') + '</div>',
+    '<button class="btn btn-primary" id="f13save">Hand over</button>');
+  $('#f13from').addEventListener('change', e => { F13.from = e.target.value; REG.routes.reassign(); });
+  $('#f13save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    const ids = $$('#f13list input:checked').map(i => i.value);
+    if (miss) { barError(miss); return; }
+    if (!ids.length) { barError('Please tick at least one engagement.'); return; }
+    runSave($('#f13save'), async () => {
+      const target = readForm(root)['To'];
+      const d = await api('bulkReassign', { by: S.me, from: F13.from, to: target, engagementIds: ids }, true);
+      d.engagements.forEach(e => upsert(S.engagements, 'Engagement ID', e)); reindex();
+      confirmed('Handed over.', plural(ids.length, 'engagement') + ' now with ' + target + '.');
+      REG.routes.reassign();
+    });
   });
-  rows.forEach(function (r) { writeRow_(t, r._row, { 'Owner': to }); r['Owner'] = to; });
-  return { engagements: rows.map(pub_) };
-});
-// ==== END F13 ====
+};
+/* ==== END F13 ================================================================ */
 
-// ====================================================================
-// FEATURE BLOCK F14 — Import organisations (server side)
-// ====================================================================
+/* ==== BEGIN F14 — Import organisations ======================================= */
 /* @spec F14
- * Validations: Server checks: each pasted row needs an Org Name (up to 120 characters) and an Org Type that is in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address. Rows that already show a Result are ignored. Loaded by must be an active member. A row that fails these checks is shown as an error and cannot be loaded.
- * Calculations: A pasted row is marked possible duplicate when its name (ignoring case and spaces) or website domain matches an existing record, Active or Archived, or an earlier row in the same Import tab [CONFIRMED]. Rows marked ready are loaded; possible duplicates are loaded only if the user chooses to [CONFIRMED]. Org IDs are issued in sheet order as in Add organisation [CONFIRMED]. After loading, the Import tab's Result column shows Loaded as ORG-xxxx, or Skipped for duplicates the user skipped [CONFIRMED].
- * Dependencies: Import tab (company sheet); Org Master (Orgs, Lists, Config); Members.
+ * Feature: Import organisations
+ * Status: New
+ * Screen: Settings > Import organisations
+ * Delta: New screen that checks organisations pasted into the Import tab of the company sheet and loads them into the Org Master. Organisations only; engagements and interactions are not imported.
+ * Validations: Form: nothing can be loaded until the check has run. Rows with errors cannot be loaded. The server repeats the checks on each row when loading.
+ * Calculations: Each row is shown as ready, possible duplicate or error [CONFIRMED]. Ready rows are loaded; each possible duplicate is skipped unless the user chooses Load anyway [CONFIRMED]. The Load button counts ready rows plus duplicates set to load [CONFIRMED]. Loaded rows get a Result in the Import tab and are not offered again [CONFIRMED]. After loading, the tool reloads its data [CONFIRMED].
+ * Dependencies: Import tab (company sheet); Org Master (Orgs, Lists, Config); Members; F01 (data reload).
  * @end */
-var IMPORT_FIELDS_ = ORG_TEXT_FIELDS;
-
-function importCheck_(ctx, ml, r) {
-  var f = {}, errors = [];
-  IMPORT_FIELDS_.forEach(function (k) { f[k] = str_(r[k]); });
-  if (!f['Org Name']) errors.push('Org Name is empty');
-  else if (f['Org Name'].length > 120) errors.push('Org Name is longer than 120 characters');
-  if (!f['Org Type']) errors.push('Org Type is empty');
-  else if (ml.orgType.indexOf(f['Org Type']) < 0) errors.push('Org Type "' + f['Org Type'] + '" is not in the list');
-  if (f['Source'] && ml.source.indexOf(f['Source']) < 0) errors.push('Source "' + f['Source'] + '" is not in the list');
-  try { f['Website'] = cleanUrl_(f['Website'], 'Website'); } catch (e) { errors.push(e.message); }
-  return { fields: f, errors: errors };
-}
-
-function importPending_(ctx) {
-  var it = readTable_(sheet_(ctx.ss, 'Import'));
-  return { table: it, rows: it.rows.filter(function (r) { return !str_(r['Result']) && IMPORT_FIELDS_.some(function (k) { return str_(r[k]); }); }) };
-}
-
-defAction_('importPreview', false, function (ctx) {
-  var ml = masterLists_(ctx);
-  var orgs = loadOrgRows_(ctx);
-  var pend = importPending_(ctx), seen = [], out = [];
-  var counts = { ready: 0, duplicate: 0, error: 0 };
-  pend.rows.forEach(function (r) {
-    var c = importCheck_(ctx, ml, r), status = 'ready', message = '', match = '';
-    if (c.errors.length) { status = 'error'; message = c.errors.join('; '); }
-    else {
-      var d = findDuplicates_(orgs, c.fields['Org Name'], c.fields['Website']);
-      if (d.length) { status = 'duplicate'; match = d[0].orgId; message = 'Looks like ' + d[0].name + ' (' + d[0].orgId + ', same ' + d[0].reason + ')'; }
-      else {
-        var nk = nameKey_(c.fields['Org Name']), dom = domainOf_(c.fields['Website']);
-        for (var i = 0; i < seen.length; i++) {
-          if (seen[i].nk === nk || (dom && seen[i].dom === dom)) { status = 'duplicate'; message = 'Same as row ' + seen[i].row + ' in this list'; break; }
-        }
-      }
-    }
-    seen.push({ nk: nameKey_(c.fields['Org Name']), dom: domainOf_(c.fields['Website']), row: r._row });
-    counts[status]++;
-    out.push({ row: r._row, name: c.fields['Org Name'], type: c.fields['Org Type'], city: c.fields['City'], status: status, message: message, match: match });
+REG.settingsItems.push({ group: 'Master data and reference', order: 2, label: 'Import organisations', route: 'import' });
+const F14 = { prev: null };
+REG.routes.import = function () {
+  page('Import organisations');
+  F14.prev = null;
+  show('<div class="card"><p style="margin-top:0">Paste organisations into the Import tab of this sheet, then check them here.</p><button class="btn btn-primary" id="f14check">Check the Import tab</button></div><div id="f14out"></div>', '');
+  $('#f14check').addEventListener('click', async e => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = 'Checking…';
+    try { F14.prev = await api('importPreview'); f14_show(); }
+    catch (err) { $('#f14out').innerHTML = '<div class="banner">' + esc(err.message) + '</div>'; }
+    finally { btn.disabled = false; btn.textContent = 'Check the Import tab'; }
   });
-  return { rows: out, counts: counts };
-});
-
-defAction_('importLoad', true, function (ctx, p) {
-  var by = activeMember_(ctx, p.by);
-  var ml = masterLists_(ctx), ms = masterSS_(ctx);
-  var loadRows = (p.load || []).map(Number), skipRows = (p.skip || []).map(Number);
-  var pend = importPending_(ctx), byRow = {};
-  pend.rows.forEach(function (r) { byRow[r._row] = r; });
-  var t = readTable_(sheet_(ms, 'Orgs'));
-  var toLoad = [], failed = [];
-  loadRows.forEach(function (n) {
-    var r = byRow[n];
-    if (!r) { failed.push({ row: n, message: 'This row is no longer waiting to be loaded.' }); return; }
-    var c = importCheck_(ctx, ml, r);
-    if (c.errors.length) { failed.push({ row: n, message: c.errors.join('; ') }); return; }
-    toLoad.push({ row: n, fields: c.fields });
+};
+function f14_selection() {
+  const load = [], skip = [];
+  F14.prev.rows.forEach(r => {
+    if (r.status === 'ready') load.push(r.row);
+    else if (r.status === 'duplicate') { const c = $('.chips[data-row="' + r.row + '"] .chip.selected'); (c && c.dataset.v === 'load' ? load : skip).push(r.row); }
   });
-  var ids = allocOrgIds_(ms, t, toLoad.length);
-  var objs = toLoad.map(function (x, i) { return newOrgObj_(ctx, x.fields, by, ids[i]); });
-  appendObjs_(t, objs);
-  if (objs.length) finishOrgIds_(ms, t, objs);
-  toLoad.forEach(function (x, i) { writeRow_(pend.table, x.row, { 'Result': 'Loaded as ' + objs[i]['Org ID'] }); });
-  var skipped = 0;
-  skipRows.forEach(function (n) { if (byRow[n]) { writeRow_(pend.table, n, { 'Result': 'Skipped' }); skipped++; } });
-  return { loaded: toLoad.map(function (x, i) { return { row: x.row, orgId: objs[i]['Org ID'] }; }), skipped: skipped, failed: failed };
-});
-// ==== END F14 ====
+  return { load: load, skip: skip };
+}
+function f14_sync() {
+  const s = f14_selection(); const b = $('#f14load');
+  if (b) { b.textContent = 'Load ' + plural(s.load.length, 'organisation'); b.disabled = !s.load.length; }
+}
+function f14_show() {
+  const p = F14.prev, c = p.counts;
+  if (!p.rows.length) { $('#f14out').innerHTML = '<div class="empty">Nothing is waiting in the Import tab.</div>'; setBar(''); return; }
+  $('#f14out').innerHTML = '<div class="badges" style="margin-bottom:12px"><span class="badge st-conv">' + c.ready + ' ready</span><span class="badge st-new">' + c.duplicate + ' possible duplicate</span><span class="badge cold">' + c.error + ' with errors</span></div>'
+    + '<div class="list">' + p.rows.map(r => '<div class="row"><div class="row-top"><div style="min-width:0"><div class="row-title">' + esc(r.name || '(no name)') + '</div><div class="row-sub">Row ' + r.row + ' · ' + esc([r.type, r.city].filter(Boolean).join(' · ')) + '</div>'
+      + (r.message ? '<div class="small ' + (r.status === 'error' ? 'overdue' : 'muted') + '">' + esc(r.message) + '</div>' : '') + '</div>'
+      + (r.status === 'ready' ? '<span class="badge st-conv">Ready</span>' : r.status === 'error' ? '<span class="badge cold">Error</span>' : '<span class="badge st-new">Duplicate?</span>') + '</div>'
+      + (r.status === 'duplicate' ? '<div class="chips" data-row="' + r.row + '" style="margin-top:8px"><div class="chip selected" data-v="skip">Skip</div><div class="chip" data-v="load">Load anyway</div></div>' : '') + '</div>').join('') + '</div>';
+  setBar('<button class="btn btn-primary" id="f14load">Load</button>');
+  f14_sync();
+  $('#f14out').addEventListener('chipchange', f14_sync);
+  $('#f14load').addEventListener('click', () => {
+    const s = f14_selection();
+    runSave($('#f14load'), async () => {
+      const d = await api('importLoad', { by: S.me, load: s.load, skip: s.skip }, true);
+      await refreshData();
+      confirmed('Loaded.', plural(d.loaded.length, 'organisation') + ' added.');
+      setBar('');
+      $('#f14out').innerHTML = '<div class="card"><div class="card-title">Done</div><p style="margin-top:0">' + plural(d.loaded.length, 'organisation') + ' added'
+        + (d.skipped ? ', ' + d.skipped + ' skipped' : '') + (d.failed.length ? ', ' + d.failed.length + ' could not be loaded' : '') + '.</p>'
+        + (d.failed.length ? d.failed.map(f => '<div class="small overdue">Row ' + f.row + ': ' + esc(f.message) + '</div>').join('') : '')
+        + '<a class="btn btn-primary" href="#/home" style="margin-top:12px">See the list</a></div>';
+    });
+  });
+}
+/* ==== END F14 ================================================================ */
 
-// ====================================================================
-// FEATURE BLOCK F15 — Product list check (server side)
-// ====================================================================
+/* ==== BEGIN F15 — Product list check ========================================= */
 /* @spec F15
- * Validations: Server checks: this check only warns and never blocks. Each Product ID is trimmed of leading and trailing spaces first, then checked. A warning is raised for a blank Product ID, a Product ID that does not follow PRD- plus 3 digits, a Product ID used on more than one row, and a Product Name used on more than one row (ignoring case and spaces).
- * Calculations: Warnings are worked out every time the data is loaded and returned with it, naming the sheet rows to fix [CONFIRMED]. Rows with no Product ID are left out of the product list because they cannot be used [CONFIRMED]. The trimmed Product ID is used for every match, so stray spaces typed in the sheet do not break an engagement [CONFIRMED]. The sheet itself is never rewritten by this check [CONFIRMED].
- * Dependencies: Products (company sheet).
+ * Feature: Product list check
+ * Status: New in v2
+ * Screen: Home (notice at the top)
+ * Delta: New notice on the Home screen when the Products tab of the company sheet has a problem. It lists each problem with the sheet row to fix. It does not block anything: the tool keeps working.
+ * Validations: Form: none. The checks run on the server when the data loads (see the server note).
+ * Calculations: The notice is shown only when there is something to fix and disappears once the sheet is corrected and the data is refreshed [CONFIRMED].
+ * Dependencies: Products (company sheet); F17 (Refresh) to see a correction without reloading the page.
  * @end */
-function rowsText_(rows) {
-  if (rows.length === 1) return 'row ' + rows[0];
-  return 'rows ' + rows.slice(0, -1).join(', ') + ' and ' + rows[rows.length - 1];
-}
-function productWarnings_(rows) {
-  var w = [], ids = {}, names = {}, nameShown = {};
-  rows.forEach(function (r) {
-    var id = r['Product ID'], nm = nameKey_(r['Product Name']);
-    if (!id) {
-      w.push({ kind: 'blank-id', message: 'Row ' + r._row + ' has no Product ID, so ' + (r['Product Name'] ? r['Product Name'] : 'it') + ' cannot be used.' });
-    } else {
-      if (!/^PRD-\d{3}$/.test(id)) w.push({ kind: 'format', message: 'Product ID "' + id + '" on row ' + r._row + ' should look like PRD-001.' });
-      (ids[id] = ids[id] || []).push(r._row);
-    }
-    if (nm) { (names[nm] = names[nm] || []).push(r._row); nameShown[nm] = nameShown[nm] || r['Product Name']; }
-  });
-  Object.keys(ids).forEach(function (id) {
-    if (ids[id].length > 1) w.push({ kind: 'dup-id', message: 'Product ID ' + id + ' is used on ' + rowsText_(ids[id]) + '.' });
-  });
-  Object.keys(names).forEach(function (nm) {
-    if (names[nm].length > 1) w.push({ kind: 'dup-name', message: 'The product name "' + nameShown[nm] + '" appears on ' + rowsText_(names[nm]) + '.' });
-  });
-  return w;
-}
-// ==== END F15 ====
-
-// ====================================================================
-// FEATURE BLOCK F16 — Edit interaction (server side)
-// ====================================================================
-/* @spec F16
- * Validations: Server checks: the interaction must exist. A changed Date must be valid and not later than today. A changed Type must be in Lists (Company) > Interaction Type. Summary is required. A changed Logged By must be an active member. A chosen engagement must belong to the same organisation. Follow-up Date, if given, is a valid date and not earlier than Date. Org ID cannot be changed. Saved by must be an active member.
- * Calculations: Only the fields sent are changed; Interaction ID, Org ID and Created On are never touched [CONFIRMED]. If the Follow-up Date is cleared, Follow-up Done is cleared with it [UNVERIFIED — NEEDS CONFIRMATION]. If the Follow-up Date is changed to a different date, Follow-up Done is cleared so the follow-up shows as open again [UNVERIFIED — NEEDS CONFIRMATION]. Next Step keeps its line breaks as typed [CONFIRMED].
- * Dependencies: Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members.
- * @end */
-defAction_('updateInteraction', true, function (ctx, p) {
-  activeMember_(ctx, p.by);
-  var t = readTable_(sheet_(ctx.ss, 'Interactions'));
-  var row = findRow_(t, 'Interaction ID', str_(p.interactionId), 'That interaction');
-  var f = p.fields || {}, patch = {};
-  function has(k) { return Object.prototype.hasOwnProperty.call(f, k); }
-  var date = row['Date'];
-  if (has('Date') && str_(f['Date']) !== row['Date']) {
-    date = cleanDate_(f['Date'], 'the date', true);
-    if (date > today_(ctx)) fail_('The date cannot be later than today.');
-    patch['Date'] = date;
-  }
-  if (has('Type') && str_(f['Type']) !== row['Type']) {
-    var type = str_(f['Type']);
-    if (teamLists_(ctx).interactionType.indexOf(type) < 0) fail_('Please choose how you were in touch.');
-    patch['Type'] = type;
-  }
-  if (has('Spoke With')) patch['Spoke With'] = str_(f['Spoke With']);
-  if (has('Logged By') && str_(f['Logged By']) !== row['Logged By']) patch['Logged By'] = activeMember_(ctx, f['Logged By']);
-  if (has('Summary')) {
-    var summary = str_(f['Summary']);
-    if (!summary) fail_('Please write a short summary of what happened.');
-    patch['Summary'] = summary;
-  }
-  if (has('Next Step')) patch['Next Step'] = str_(f['Next Step']);
-  if (has('Engagement ID') && str_(f['Engagement ID']) !== row['Engagement ID']) {
-    var engId = str_(f['Engagement ID']);
-    if (engId) {
-      var orgRows = loadOrgRows_(ctx);
-      var eng = findRow_(readTable_(sheet_(ctx.ss, 'Engagements')), 'Engagement ID', engId, 'That engagement');
-      var eo, io;
-      try { eo = resolveOrg_(orgRows, eng['Org ID']); } catch (x) { eo = eng['Org ID']; }
-      try { io = resolveOrg_(orgRows, row['Org ID']); } catch (y) { io = row['Org ID']; }
-      if (eo !== io) fail_('That engagement belongs to a different organisation.');
-    }
-    patch['Engagement ID'] = engId;
-  }
-  var fu = row['Follow-up Date'];
-  if (has('Follow-up Date') && str_(f['Follow-up Date']) !== row['Follow-up Date']) {
-    fu = cleanDate_(f['Follow-up Date'], 'the follow-up date', false);
-    patch['Follow-up Date'] = fu;
-    patch['Follow-up Done'] = '';
-  }
-  if (fu && fu < date) fail_('The follow-up date cannot be earlier than the date of contact.');
-  writeRow_(t, row._row, patch);
-  Object.keys(patch).forEach(function (k) { row[k] = patch[k]; });
-  return { interaction: pub_(row) };
+REG.homeBanners.push(function () {
+  const w = S.productWarnings || [];
+  if (!w.length) return '';
+  return '<div class="banner"><b>A few things to fix in the Products tab</b><ul>' + w.map(x => '<li>' + esc(x.message) + '</li>').join('') + '</ul></div>';
 });
-// ==== END F16 ====
+/* ==== END F15 ================================================================ */
 
-// ====================================================================
-// FEATURE BLOCK F23 — Insights read action (server side)
-// ====================================================================
-/* @spec F23
- * Feature: Insights read action
- * Status: New in v5
- * Screen: None (script action used by the Insights tool)
- * Delta: New read-only action, getInsights, and a second key. Config > Insights Team Key opens only this action; the Team Key keeps opening everything. The Insights tool uses the company's existing web app, so there is no second deployment.
- * Validations: Server checks: the Insights Team Key is refused for every write action and for every action other than getInsights, with a message saying it can only be used to view Insights. A wrong key is refused as before. The Team Key must still be set in Config.
- * Calculations: The action returns only what Insights needs: the engagement fields Engagement ID, Org ID, Product ID, Stage, Start Date, Stage Changed On, Revisit On and Campaign ID; the interaction fields Interaction ID, Org ID, Engagement ID, Date, Follow-up Date and Follow-up Done; the organisation fields Org ID, Org Name, Record Status and Archived To; products; campaigns; Stage History; the stage list with Kinds; and the settings Stale After Days, Primary Colour, Workspace Name, Timezone and today's date [CONFIRMED]. Contacts, summaries, expectations and document links are not returned [CONFIRMED]. Nothing is written [CONFIRMED].
- * Dependencies: Config (Company): Insights Team Key, Team Key, Stale After Days, Primary Colour, Workspace Name; Engagements; Interactions; Stage History; Campaigns; Products; Org Master (Orgs).
+/* ==== BEGIN F16 — Edit interaction =========================================== */
+/* @spec F16
+ * Feature: Edit interaction
+ * Status: New in v2
+ * Screen: Organisation page > Interactions > Edit; Engagement page > Interactions > Edit
+ * Delta: New Edit link on every interaction and a new form with the saved values. Date, how you were in touch, who you spoke with, who logged it, what happened, next step, follow-up date and the product it was about can all be changed. The organisation cannot be changed.
+ * Validations: Form: date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The product choice lists only this organisation's engagements. The server repeats every check.
+ * Calculations: Clearing the follow-up date, or choosing a different follow-up date, makes the follow-up open again [UNVERIFIED — NEEDS CONFIRMATION]. After saving, the screen the person came from opens again with the changes [CONFIRMED].
+ * Dependencies: Interactions; Engagements; Lists (Company): Interaction Type; Members; F10 (shared product picker helper f10_fillEng).
  * @end */
-function pick_(o, keys) {
-  var c = {};
-  keys.forEach(function (k) { c[k] = o[k] === undefined ? '' : o[k]; });
-  return c;
+REG.routes['edit-int'] = function (args) {
+  const i = S.interactions.find(x => x['Interaction ID'] === args[0]);
+  page('Edit interaction');
+  if (!i) { show('<div class="empty">That interaction could not be found.</div>'); return; }
+  const orgId = resolveOrgId(i['Org ID']);
+  const names = activeNames(); if (names.indexOf(i['Logged By']) < 0) names.push(i['Logged By']);
+  const types = S.lists.interactionType.slice(); if (types.indexOf(i['Type']) < 0) types.push(i['Type']);
+  show('<div class="card"><div class="org-name">' + esc(orgName(orgId)) + '</div>'
+    + fSelect('Engagement ID', 'About which product?', [], { blank: 'General, no specific product' })
+    + fDate('Date', 'Date', { req: true, value: i['Date'], max: todayStr() })
+    + fChoice('Type', 'How were you in touch?', types, { req: true, value: i['Type'] })
+    + fText('Spoke With', 'Spoke with', { value: i['Spoke With'] })
+    + fChoice('Logged By', 'Logged by', names, { req: true, value: i['Logged By'] })
+    + fText('Summary', 'What happened?', { req: true, area: true, rows: 4, value: i['Summary'] })
+    + fText('Next Step', 'Next step', { area: true, rows: 3, value: i['Next Step'] })
+    + fDate('Follow-up Date', 'Follow up on', { value: i['Follow-up Date'], min: i['Date'] }) + '</div>',
+    '<button class="btn btn-primary" id="f16save">Save changes</button>');
+  f10_fillEng(orgId, i['Engagement ID']);
+  $('#f16save').addEventListener('click', () => {
+    const root = $('#view'); const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    const f = readForm(root);
+    if (f['Follow-up Date'] && f['Follow-up Date'] < f['Date']) { barError('The follow-up date cannot be earlier than the date of contact.'); return; }
+    runSave($('#f16save'), async () => {
+      const d = await api('updateInteraction', { by: S.me, interactionId: i['Interaction ID'], fields: f }, true);
+      upsert(S.interactions, 'Interaction ID', d.interaction); reindex();
+      confirmed('Saved.', 'The interaction is up to date.');
+      back();
+    });
+  });
+};
+/* ==== END F16 ================================================================ */
+
+/* ==== BEGIN F17 — Refresh ==================================================== */
+/* @spec F17
+ * Feature: Refresh
+ * Status: New in v2
+ * Screen: Header on Home, Organisation page and Engagement page
+ * Delta: New refresh button in the header that fetches the latest data from the sheets without reloading the page. Filters, the open tab and the scroll position are kept. It is not shown on forms, so a half-filled form is never lost.
+ * Validations: Form: none.
+ * Calculations: Refresh fetches the same data as the first load and redraws the current screen [CONFIRMED]. If the fetch fails, a message appears and the data already on screen is kept [CONFIRMED]. The Settings > Reload link does the same and stays.
+ * Dependencies: F01 (data load).
+ * @end */
+REG.acts['f17.refresh'] = async el => {
+  el.disabled = true; el.classList.add('spin');
+  const y = window.scrollY;
+  try { await refreshData(); route(); window.scrollTo(0, y); toast('Up to date.'); }
+  catch (e) { el.disabled = false; el.classList.remove('spin'); toast(e.message); }
+};
+/* ==== END F17 ================================================================ */
+
+
+/* ==== BEGIN F18 — Change web app address ================================= */
+/* @spec F18
+ * Feature: Change web app address
+ * Status: New in v3
+ * Screen: Settings > This device
+ * Delta: New row in Settings > This device that opens the web app address screen with the current address filled in, so a device can be pointed at another workspace without clearing anything.
+ * Validations: Form: the address is required and must answer, the same check as the first connection. Cancel leaves everything as it was.
+ * Calculations: After a new address is accepted, the device asks for that workspace's team key and name, which are remembered separately for each address [CONFIRMED]. The old workspace's key and name stay remembered, so changing back does not ask again [CONFIRMED].
+ * Dependencies: F01 (connection screens and per-address memory).
+ * @end */
+REG.deviceRows.push(() => '<div class="row-top" style="margin-bottom:6px"><div class="muted">Web app address</div><button class="link-btn" data-act="f18.change">Change</button></div>');
+REG.acts['f18.change'] = () => {
+  viewConnect();
+  const i = $('input[data-k="url"]'); if (i) i.value = S.url;
+  $('#view').insertAdjacentHTML('beforeend', '<div class="center"><button class="link-btn" data-act="f18.cancel">Cancel</button></div>');
+};
+REG.acts['f18.cancel'] = () => startRouting();
+/* ==== END F18 ================================================================ */
+
+/* ==== BEGIN F19 — Logo from the landing page ============================= */
+/* @spec F19
+ * Feature: Logo from the landing page
+ * Status: New in v3
+ * Screen: Header on Home
+ * Delta: New logo at the left of the header on the Home screen. The landing page passes the logo's address in the link (logo=…), and the tool remembers it on the device for that workspace.
+ * Validations: Form: none. Only a full web address starting with http:// or https:// is accepted as a logo.
+ * Calculations: The logo is taken from the link only when the link's own web app address is the one in use, so a typed-in address never picks up another workspace's logo [CONFIRMED]. If the logo cannot be loaded, the header shows text only and nothing else is affected [CONFIRMED]. The logo shows on Home only, not on inner pages where the Back button sits [CONFIRMED].
+ * Dependencies: F01 (web app address and per-address memory); the landing page (supplies the logo address).
+ * @end */
+function logoSync(o) {
+  const img = $('#hLogo'); if (!img) return;
+  if (S.logo && img.getAttribute('src') !== S.logo) img.setAttribute('src', S.logo);
+  img.hidden = !S.logo || !!(o && o.back);
 }
-defAction_('getInsights', false, function (ctx) {
-  var tl = teamLists_(ctx), cfg = ctx.cfg;
-  var prodT = productsTable_(ctx);
-  return {
-    config: {
-      workspaceName: cfg['Workspace Name'] || '',
-      primaryColour: cfg['Primary Colour'] || '',
-      staleAfterDays: parseInt(cfg['Stale After Days'], 10) || 90,
-      timezone: ctx.tz,
-      today: today_(ctx)
-    },
-    lists: { stage: tl.stage, stageKind: tl.stageKind },
-    stageWarnings: stageWarnings_(tl.stageRows),
-    products: prodT.rows.filter(function (r) { return r['Product ID']; }).map(function (r) { return pick_(r, ['Product ID', 'Product Name']); }),
-    campaigns: campaignsTable_(ctx).rows.map(function (r) { return pick_(r, ['Campaign ID', 'Campaign Name', 'Start Date', 'End Date', 'Active']); }),
-    engagements: readTable_(sheet_(ctx.ss, 'Engagements')).rows.map(function (r) {
-      return pick_(r, ['Engagement ID', 'Org ID', 'Product ID', 'Stage', 'Start Date', 'Stage Changed On', 'Revisit On', 'Campaign ID']);
-    }),
-    interactions: readTable_(sheet_(ctx.ss, 'Interactions')).rows.map(function (r) {
-      return pick_(r, ['Interaction ID', 'Org ID', 'Engagement ID', 'Date', 'Follow-up Date', 'Follow-up Done']);
-    }),
-    stageHistory: stageHistoryTable_(ctx).rows.map(function (r) {
-      return pick_(r, ['Log ID', 'Engagement ID', 'From Stage', 'To Stage', 'Changed On']);
-    }),
-    orgs: loadOrgRows_(ctx).map(function (r) { return pick_(r, ['Org ID', 'Org Name', 'Record Status', 'Archived To']); })
-  };
-}, { insights: true });
-// ==== END F23 ====
+REG.hooks.url.push(() => {
+  const p = new URLSearchParams(location.search), lg = p.get('logo') || '';
+  if (/^https?:\/\//i.test(lg) && p.get('url') === S.url) store.set('logo', lg);
+  S.logo = store.get('logo') || '';
+});
+REG.hooks.chrome.push(logoSync);
+(function () { const img = $('#hLogo'); if (img) img.addEventListener('error', () => { S.logo = ''; img.hidden = true; }); })();
+/* ==== END F19 ================================================================ */
+
+/* ==== BEGIN F20 — Stage list check =========================================== */
+/* @spec F20
+ * Feature: Stage list check
+ * Status: New in v5
+ * Screen: Home (notice at the top)
+ * Delta: New notice on the Home screen when the Stage list or its Stage Kind column in the Lists tab has a problem. It says what to fix. It does not block anything: the tool keeps working with the stages as they are.
+ * Validations: Form: none. The checks run on the server when the data loads (see the server note).
+ * Calculations: The notice is shown only when there is something to fix and disappears once the sheet is corrected and the data is refreshed [CONFIRMED]. A stage with no Kind is treated as neither Open, Won nor Lost until it is fixed, so it is not counted as open [CONFIRMED].
+ * @end */
+REG.homeBanners.push(function () {
+  const w = S.stageWarnings || [];
+  if (!w.length) return '';
+  return '<div class="banner"><b>A few things to fix in the Stage list</b><ul>' + w.map(x => '<li>' + esc(x.message) + '</li>').join('') + '</ul></div>';
+});
+/* ==== END F20 ================================================================ */
+
+/* ==== BEGIN F21 — Campaigns on engagements =================================== */
+/* @spec F21
+ * Feature: Campaigns on engagements
+ * Status: New in v5
+ * Screen: Organisation page > Add engagement; Engagement page > Edit; Engagement page
+ * Delta: New optional Campaign choice when adding or editing an engagement, and the campaign name on the engagement page. Campaigns are typed in the Campaigns tab of the company sheet. The choice is not shown when there are no campaigns.
+ * Validations: Form: optional. Only active campaigns are offered, plus the engagement's current campaign if it has since become inactive. The server repeats the check.
+ * Calculations: A campaign is only a label on an engagement; it changes no stage or count in this tool [CONFIRMED]. The Insights tool uses it to report one campaign at a time [CONFIRMED].
+ * Dependencies: Campaigns (company sheet); Engagements: Campaign ID.
+ * @end */
+function f21_field(current) {
+  const opts = S.campaigns.filter(c => isYes(c['Active']) || c['Campaign ID'] === current).map(c => ({ v: c['Campaign ID'], l: c['Campaign Name'] }));
+  if (!opts.length) return '';
+  return fSelect('Campaign ID', 'Campaign', opts, { value: current || '', blank: 'No campaign' });
+}
+/* ==== END F21 ================================================================ */
+
+/* ==== Feature Spec view (generated from the spec tags at build time) ========= */
+const FEATURE_SPEC = [
+ {
+  "feature": "Connect, identify and brand",
+  "status": "Modified in v6",
+  "screen": "First open; Settings > This device",
+  "delta": "New start-up flow: the web app address (from the landing page link ?url=, or typed once), the team key, and the person using the tool. All three are remembered on the device. The page title, heading and main colour come from Config. In v6 the team key step appears only when the server asks for a key: with a blank Team Key in Config the tool opens straight to the person choice (see F24).",
+  "validations": "Form: the web app address must answer; the team key is required when the server asks for one and is checked by the server on every request; the person must be chosen from active members.",
+  "calculations": "Remembered values are kept per web app address, so two workspaces opened from the same page do not mix [CONFIRMED]. Heading is Tool Title (default Relationships), the subtitle is Workspace Name, and the colour is Primary Colour with darker and softer shades worked out from it [CONFIRMED]. Today's date comes from the server in the Config timezone [CONFIRMED].",
+  "dependencies": "Config (Company): Team Key, Workspace Name, Tool Title, Primary Colour, Timezone; Members.",
+  "id": "F01"
+ },
+ {
+  "feature": "Organisation search and filter",
+  "status": "Modified in v4",
+  "screen": "Home > Organisations",
+  "delta": "Home tab from v1: search box, a Filters panel and a list of active organisations. In v4 a Person filter is added above the search box, set to the person using the tool, and the Owner filter in the Filters panel is replaced by it (type, city, tag and stage stay in the panel). Reuse the Engagements tab's owner filter pattern; the Person list is fresh logic.",
+  "validations": "Form: none; every filter is optional.",
+  "calculations": "Search matches name, city, state, tags and contacts, ignoring case; several words must all match [CONFIRMED for name, city and tags; UNVERIFIED — NEEDS CONFIRMATION for state and contacts]. All filters combine with AND [CONFIRMED]. The Stage filter matches organisations that have at least one engagement of this company at that stage [CONFIRMED]. In v4 the Person filter matches an organisation when it was last updated by that person (the Last Updated By stamp, which is also set when the organisation is first added) or when that person owns one of this company's engagements with it [CONFIRMED]. The Person filter starts as the person using the tool, and All shows everyone [CONFIRMED]. The Person list holds this company's active members and engagement owners, plus anyone else seen in the stamps, shown as Name (Workspace Name) [CONFIRMED]. Person and Stage are checked separately, so they no longer have to be met by the same engagement [CONFIRMED]. When the Person filter leaves nothing, the empty message offers Show everyone [CONFIRMED]. Archived organisations are hidden [CONFIRMED]. Each row shows up to two of the company's engagements as product and stage [CONFIRMED]. The list is sorted by name and shows 60 rows at a time [CONFIRMED].",
+  "dependencies": "Org Master (Orgs): Last Updated By; Engagements: Owner; Config (Company): Workspace Name; Members; Products; F03 (row opens the organisation page).",
+  "id": "F02"
+ },
+ {
+  "feature": "Organisation briefing page",
+  "status": "New",
+  "screen": "Organisation page (opened from any list)",
+  "delta": "New screen: name, type, place, website, tags, last contact, contacts, about, the company's engagements and recent interactions, and who created and last updated the record.",
+  "validations": "Form: none (read-only page).",
+  "calculations": "Last contact is the latest interaction Date among this company's interactions with the organisation [CONFIRMED]. Opening an archived organisation shows the organisation named in Archived To instead [CONFIRMED]. Engagements and interactions recorded against an archived Org ID appear on the replacement organisation [CONFIRMED]. Phone numbers and email addresses in Contacts become tappable links [CONFIRMED]. Created by and Last updated by show Name (Workspace Name) so another company can see whom to ask [CONFIRMED].",
+  "dependencies": "Org Master (Orgs); Engagements; Interactions; sections added by F08 and F10; actions added by F05, F06, F07 and F10.",
+  "id": "F03"
+ },
+ {
+  "feature": "Add organisation",
+  "status": "New",
+  "screen": "Home > Add > Organisation",
+  "delta": "New form and a duplicate warning. Entry point is registered in the Add menu; the form can be opened from an empty search with the typed name filled in.",
+  "validations": "Form: Organisation name and Type are required; the page scrolls to the first missing field and nothing is saved. Website is accepted with or without https://. The server repeats every check. Server checks: Org Name is required, up to 120 characters. Org Type is required and must be in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address; https:// is added when missing. Added by must be an active member.",
+  "calculations": "Before saving, existing records with the same name (ignoring case and spaces) or the same website domain are listed with Open and Add anyway [CONFIRMED]. Org ID, stamps and the counter are set by the server on save [CONFIRMED]. After saving, the new organisation page opens [CONFIRMED]. Server: Org ID is the highest existing number in the Org Master plus 1 (and never lower than Config > Next Org Number), written as ORG- plus 4 digits, under a script lock [CONFIRMED]. After the row is written the script checks the ID appears once and issues a new one if another company's script created the same ID at the same moment [CONFIRMED]. Next Org Number is then set to the highest ID plus 1 [CONFIRMED]. Duplicate check: an existing record, Active or Archived, with the same name ignoring case and spaces, or the same website domain ignoring www, is returned as a warning and the record is not saved until the user confirms [CONFIRMED]. Created On/By and Last Updated On/By are set on save as Name (Workspace Name) [CONFIRMED].",
+  "dependencies": "Org Master (Orgs, Lists); Members; shared form helper orgFormHtml. Server: Org Master (Orgs, Lists, Config); Config (Company): Workspace Name, Master Sheet ID; Members.",
+  "id": "F04"
+ },
+ {
+  "feature": "Edit organisation",
+  "status": "New",
+  "screen": "Organisation page > Edit details",
+  "delta": "New form, the same fields as Add organisation, filled with the saved values. Includes the Contacts and About text.",
+  "validations": "Form: Organisation name and Type are required. The server repeats every check and refuses archived records. Server checks: same field rules as Add organisation. Org ID cannot be changed. An archived organisation cannot be edited. Saved by must be an active member.",
+  "calculations": "Last Updated On and By are set by the server on every save [CONFIRMED]. Created On and By are not changed [CONFIRMED]. After saving, the organisation page opens [CONFIRMED]. Server: Last Updated On/By are set on every save, as Name (Workspace Name) [CONFIRMED]. Created On/By are never changed [CONFIRMED].",
+  "dependencies": "Org Master (Orgs, Lists); Members; shared form helper orgFormHtml. Server: Org Master (Orgs, Lists); Members; Config (Company): Workspace Name.",
+  "id": "F05"
+ },
+ {
+  "feature": "Mark organisation as duplicate",
+  "status": "New",
+  "screen": "Organisation page > Mark as duplicate",
+  "delta": "New screen to pick the record that replaces this one. Records are archived, never deleted or merged.",
+  "validations": "Form: the replacement is required and is chosen from active organisations other than this one. The server repeats the checks. Server checks: the replacement organisation must exist, be Active, and be a different record. An organisation that is already archived cannot be archived again. Saved by must be an active member.",
+  "calculations": "After saving, the old record is hidden from search and lists and opening it shows the replacement; its engagements and interactions appear on the replacement [CONFIRMED]. Server: Record Status becomes Archived and Archived To holds the replacement Org ID; the record stays in the sheet and Last Updated On/By are set [CONFIRMED]. Org IDs stored on engagements and interactions are not rewritten; they are resolved through Archived To when read [CONFIRMED].",
+  "dependencies": "Org Master (Orgs); F03 (redirect and combined history). Server: Org Master (Orgs); Members.",
+  "id": "F06"
+ },
+ {
+  "feature": "Add engagements",
+  "status": "Modified in v5",
+  "screen": "Organisation page > Add engagement",
+  "delta": "New form. Several products can be ticked in one save, which creates one engagement per product. Products that already have an engagement with this organisation are shown crossed out and cannot be ticked. In v2 products come from the Products tab of the company sheet (the Manage products screen was removed). In v5 an optional Campaign choice is added (see F21), and a new engagement starts at the first stage in the Lists tab instead of a fixed stage.",
+  "validations": "Form: at least one product, an owner and a start date are required. Only active products are offered. Key contact, expectations, the document link and the campaign are optional. The server repeats every check, including one engagement per organisation and product. Server checks: the organisation must exist (an archived one is replaced by its Archived To record). At least one product must be chosen; each must exist and be Active. A product that already has an engagement with this organisation is rejected. Owner must be an active member. Start Date must be a valid date. Document Link, if given, must be a web address. At least one stage must be set up in Lists. A campaign, if given, follows F21.",
+  "calculations": "Stage starts as the first stage in Lists > Stage [CONFIRMED]. The owner defaults to the person using the tool [CONFIRMED]. Start date defaults to today [CONFIRMED]. After saving, the organisation page opens [CONFIRMED]. Server: One engagement is created per chosen product, all with the same owner, key contact, expectations, start date, document link and campaign [CONFIRMED]. Engagement ID is the highest existing number plus 1, written as ENG- plus 4 digits, under a script lock [CONFIRMED]. Stage starts as the first stage in Lists > Stage; Stage Changed On is set to today [CONFIRMED]. One Stage History row is added per engagement (see F22) [CONFIRMED]. Created On/By are set on save [CONFIRMED]. Product IDs read from the Products tab are trimmed of leading and trailing spaces before they are matched [CONFIRMED].",
+  "dependencies": "Products (typed in the company sheet); Members; Engagements; F21 (campaign choice). Server: Products (typed in the company sheet); Members; Org Master (Orgs); Lists (Company): Stage; Campaigns; Stage History.",
+  "id": "F07"
+ },
+ {
+  "feature": "Engagement page and update",
+  "status": "Modified in v5",
+  "screen": "Organisation page > Engagements; Engagement page; Engagement page > Edit",
+  "delta": "New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page. In v5 the stages and their order come from the Lists tab, the colour of each stage badge follows its Stage Kind, the campaign is shown and can be changed (see F21), and a stage change is logged (see F22).",
+  "validations": "Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the chosen stage has the Kind Lost. The server repeats every check. Server checks: Stage must be in Lists (Company) > Stage. A changed Owner must be an active member. Start Date and Revisit On must be valid dates, and Revisit On cannot be earlier than Start Date. Document Link, if given, must be a web address. A changed Campaign ID follows F21. Org ID and Product ID cannot be changed. Saved by must be an active member.",
+  "calculations": "Tapping a stage saves it at once and sets Stage Changed On to today; tapping a Lost stage opens the edit form so the reason can be added [CONFIRMED]. Last contact is the latest interaction Date for the engagement [CONFIRMED]. An engagement is flagged Going cold when its stage Kind is Open, it is not at the first stage in the list, and the days since its last interaction (or its start date if there is none) exceed Stale After Days [CONFIRMED]. Won and Lost engagements, and engagements still at the first stage, are never flagged [CONFIRMED]. Engagements on the organisation page are ordered Open stages first, then Won, then Lost, each in the order of the Lists tab, newest start first [CONFIRMED]. Badge colours: first stage soft purple, other Open stages solid purple, Won green, Lost grey [CONFIRMED]. Server: Stage Changed On is set to today whenever Stage changes [CONFIRMED]. A Stage History row is added whenever Stage changes (see F22) [CONFIRMED]. Not Interested Reason and Revisit On are kept as saved when the stage later changes; they are not cleared automatically [CONFIRMED].",
+  "dependencies": "Engagements; Products; Interactions; Lists (Company): Stage, Stage Kind; Config: Stale After Days; Members; Campaigns. Server: Engagements; Lists (Company): Stage; Members; Campaigns; Stage History.",
+  "id": "F08"
+ },
+ {
+  "feature": "Engagements work list",
+  "status": "Modified in v5",
+  "screen": "Home > Engagements",
+  "delta": "New home tab listing the company's engagements with owner and stage filters and a Going cold flag. In v5 Open means every stage whose Kind is Open, instead of two fixed stage names.",
+  "validations": "Form: none; both filters are optional.",
+  "calculations": "The Owner filter starts as the person using the tool and can be set to All or another person [CONFIRMED]. The Stage filter starts as Open (every stage with the Kind Open) and can be set to All or a single stage [CONFIRMED]. Going cold rows are listed first, then the longest since last contact first [CONFIRMED]. Each row shows the days since the last contact, or No contact yet [CONFIRMED].",
+  "dependencies": "Engagements; Interactions; Products; Lists (Company): Stage, Stage Kind; Config: Stale After Days; F08 (row opens the engagement page).",
+  "id": "F09"
+ },
+ {
+  "feature": "Log interaction",
+  "status": "Modified in v2",
+  "screen": "Home > Add > Log interaction; Organisation page > Log interaction; Engagement page > Log interaction",
+  "delta": "New form and a new Interactions list on the organisation page (latest five, with Show all). An interaction belongs to the organisation, with the engagement optional. In v2 the Next step box is multi-line, like What happened, and line breaks are shown as typed on the organisation, engagement and follow-up screens.",
+  "validations": "Form: organisation (when not already chosen), date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The engagement choice lists only this organisation's engagements. The server repeats every check. Server checks: the organisation must exist (archived resolves to its replacement). If an engagement is given it must belong to the same organisation. Date is required, a valid date and not later than today. Type must be in Lists (Company) > Interaction Type. Logged By must be an active member. Summary is required. Follow-up Date, if given, is a valid date and not earlier than Date.",
+  "calculations": "Date defaults to today and Logged by to the person using the tool [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. After saving, the engagement page opens when the form was started from an engagement, otherwise the organisation page [CONFIRMED]. Server: Interaction ID is the highest existing number plus 1, written as INT- plus 4 digits, under a script lock [CONFIRMED]. Follow-up Done starts blank, meaning open [CONFIRMED]. Created On is set on save [CONFIRMED]. Summary and Next Step keep their line breaks as typed [CONFIRMED].",
+  "dependencies": "Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members. Server: Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members.",
+  "id": "F10"
+ },
+ {
+  "feature": "Follow-ups due",
+  "status": "New",
+  "screen": "Home > Follow-ups",
+  "delta": "New home tab listing open follow-ups with an owner filter and a Done button on each.",
+  "validations": "Form: none; the owner filter is optional. Server checks: the interaction must exist and must have a Follow-up Date. Saved by must be an active member.",
+  "calculations": "A follow-up is open when an interaction has a Follow-up Date and Follow-up Done is not Yes [CONFIRMED]. It is overdue when the date is before today [CONFIRMED]. The list shows overdue items first, then by date [CONFIRMED]. The owner of a follow-up is the owner of its engagement, or the person who logged it when there is no engagement [CONFIRMED]. The Owner filter starts as the person using the tool [CONFIRMED]. Done marks the follow-up as done and removes it from the list [CONFIRMED]. Server: Marking done sets Follow-up Done to Yes; un-marking clears it [CONFIRMED].",
+  "dependencies": "Interactions; Engagements; Org Master (Orgs). Server: Interactions.",
+  "id": "F11"
+ },
+ {
+  "feature": "Hand over engagements",
+  "status": "Modified in v5",
+  "screen": "Settings > Hand over engagements",
+  "delta": "New screen to move engagements from one owner to another in one save. In v5 the engagements ticked by default are those whose stage Kind is Open, instead of two fixed stage names.",
+  "validations": "Form: a new owner and at least one ticked engagement are required. The new owner is chosen from active members other than the current owner. The server repeats the checks. Server checks: at least one engagement must be chosen. The new owner must be an active member and different from the current owner. Every chosen engagement must currently be owned by the person named as the current owner. Saved by must be an active member.",
+  "calculations": "The list shows every engagement owned by the chosen person; engagements at an Open stage are ticked by default and Won and Lost ones are not [CONFIRMED]. Only Owner changes; stages and dates are untouched [CONFIRMED]. Server: Owner is changed on every chosen engagement in one save; other fields and Stage Changed On are not touched [CONFIRMED]. Which engagements are chosen is decided on the screen: engagements whose stage Kind is Open are ticked by default, Won and Lost are unticked [CONFIRMED].",
+  "dependencies": "Engagements; Members; Lists (Company): Stage, Stage Kind. Server: Engagements; Members.",
+  "id": "F13"
+ },
+ {
+  "feature": "Import organisations",
+  "status": "New",
+  "screen": "Settings > Import organisations",
+  "delta": "New screen that checks organisations pasted into the Import tab of the company sheet and loads them into the Org Master. Organisations only; engagements and interactions are not imported.",
+  "validations": "Form: nothing can be loaded until the check has run. Rows with errors cannot be loaded. The server repeats the checks on each row when loading. Server checks: each pasted row needs an Org Name (up to 120 characters) and an Org Type that is in the Org Master Lists. Source, if given, must be in Lists. Website, if given, must be a single web address. Rows that already show a Result are ignored. Loaded by must be an active member. A row that fails these checks is shown as an error and cannot be loaded.",
+  "calculations": "Each row is shown as ready, possible duplicate or error [CONFIRMED]. Ready rows are loaded; each possible duplicate is skipped unless the user chooses Load anyway [CONFIRMED]. The Load button counts ready rows plus duplicates set to load [CONFIRMED]. Loaded rows get a Result in the Import tab and are not offered again [CONFIRMED]. After loading, the tool reloads its data [CONFIRMED]. Server: A pasted row is marked possible duplicate when its name (ignoring case and spaces) or website domain matches an existing record, Active or Archived, or an earlier row in the same Import tab [CONFIRMED]. Rows marked ready are loaded; possible duplicates are loaded only if the user chooses to [CONFIRMED]. Org IDs are issued in sheet order as in Add organisation [CONFIRMED]. After loading, the Import tab's Result column shows Loaded as ORG-xxxx, or Skipped for duplicates the user skipped [CONFIRMED].",
+  "dependencies": "Import tab (company sheet); Org Master (Orgs, Lists, Config); Members; F01 (data reload). Server: Import tab (company sheet); Org Master (Orgs, Lists, Config); Members.",
+  "id": "F14"
+ },
+ {
+  "feature": "Product list check",
+  "status": "New in v2",
+  "screen": "Home (notice at the top)",
+  "delta": "New notice on the Home screen when the Products tab of the company sheet has a problem. It lists each problem with the sheet row to fix. It does not block anything: the tool keeps working.",
+  "validations": "Form: none. The checks run on the server when the data loads (see the server note). Server checks: this check only warns and never blocks. Each Product ID is trimmed of leading and trailing spaces first, then checked. A warning is raised for a blank Product ID, a Product ID that does not follow PRD- plus 3 digits, a Product ID used on more than one row, and a Product Name used on more than one row (ignoring case and spaces).",
+  "calculations": "The notice is shown only when there is something to fix and disappears once the sheet is corrected and the data is refreshed [CONFIRMED]. Server: Warnings are worked out every time the data is loaded and returned with it, naming the sheet rows to fix [CONFIRMED]. Rows with no Product ID are left out of the product list because they cannot be used [CONFIRMED]. The trimmed Product ID is used for every match, so stray spaces typed in the sheet do not break an engagement [CONFIRMED]. The sheet itself is never rewritten by this check [CONFIRMED].",
+  "dependencies": "Products (company sheet); F17 (Refresh) to see a correction without reloading the page. Server: Products (company sheet).",
+  "id": "F15"
+ },
+ {
+  "feature": "Edit interaction",
+  "status": "New in v2",
+  "screen": "Organisation page > Interactions > Edit; Engagement page > Interactions > Edit",
+  "delta": "New Edit link on every interaction and a new form with the saved values. Date, how you were in touch, who you spoke with, who logged it, what happened, next step, follow-up date and the product it was about can all be changed. The organisation cannot be changed.",
+  "validations": "Form: date, type, logged by and summary are required. The date cannot be later than today. The follow-up date cannot be earlier than the date. The product choice lists only this organisation's engagements. The server repeats every check. Server checks: the interaction must exist. A changed Date must be valid and not later than today. A changed Type must be in Lists (Company) > Interaction Type. Summary is required. A changed Logged By must be an active member. A chosen engagement must belong to the same organisation. Follow-up Date, if given, is a valid date and not earlier than Date. Org ID cannot be changed. Saved by must be an active member.",
+  "calculations": "Clearing the follow-up date, or choosing a different follow-up date, makes the follow-up open again [UNVERIFIED — NEEDS CONFIRMATION]. After saving, the screen the person came from opens again with the changes [CONFIRMED]. Server: Only the fields sent are changed; Interaction ID, Org ID and Created On are never touched [CONFIRMED]. If the Follow-up Date is cleared, Follow-up Done is cleared with it [UNVERIFIED — NEEDS CONFIRMATION]. If the Follow-up Date is changed to a different date, Follow-up Done is cleared so the follow-up shows as open again [UNVERIFIED — NEEDS CONFIRMATION]. Next Step keeps its line breaks as typed [CONFIRMED].",
+  "dependencies": "Interactions; Engagements; Lists (Company): Interaction Type; Members; F10 (shared product picker helper f10_fillEng). Server: Interactions; Engagements; Org Master (Orgs); Lists (Company): Interaction Type; Members.",
+  "id": "F16"
+ },
+ {
+  "feature": "Refresh",
+  "status": "New in v2",
+  "screen": "Header on Home, Organisation page and Engagement page",
+  "delta": "New refresh button in the header that fetches the latest data from the sheets without reloading the page. Filters, the open tab and the scroll position are kept. It is not shown on forms, so a half-filled form is never lost.",
+  "validations": "Form: none.",
+  "calculations": "Refresh fetches the same data as the first load and redraws the current screen [CONFIRMED]. If the fetch fails, a message appears and the data already on screen is kept [CONFIRMED]. The Settings > Reload link does the same and stays.",
+  "dependencies": "F01 (data load).",
+  "id": "F17"
+ },
+ {
+  "feature": "Change web app address",
+  "status": "New in v3",
+  "screen": "Settings > This device",
+  "delta": "New row in Settings > This device that opens the web app address screen with the current address filled in, so a device can be pointed at another workspace without clearing anything.",
+  "validations": "Form: the address is required and must answer, the same check as the first connection. Cancel leaves everything as it was.",
+  "calculations": "After a new address is accepted, the device asks for that workspace's team key and name, which are remembered separately for each address [CONFIRMED]. The old workspace's key and name stay remembered, so changing back does not ask again [CONFIRMED].",
+  "dependencies": "F01 (connection screens and per-address memory).",
+  "id": "F18"
+ },
+ {
+  "feature": "Logo from the landing page",
+  "status": "New in v3",
+  "screen": "Header on Home",
+  "delta": "New logo at the left of the header on the Home screen. The landing page passes the logo's address in the link (logo=…), and the tool remembers it on the device for that workspace.",
+  "validations": "Form: none. Only a full web address starting with http:// or https:// is accepted as a logo.",
+  "calculations": "The logo is taken from the link only when the link's own web app address is the one in use, so a typed-in address never picks up another workspace's logo [CONFIRMED]. If the logo cannot be loaded, the header shows text only and nothing else is affected [CONFIRMED]. The logo shows on Home only, not on inner pages where the Back button sits [CONFIRMED].",
+  "dependencies": "F01 (web app address and per-address memory); the landing page (supplies the logo address).",
+  "id": "F19"
+ },
+ {
+  "feature": "Stage list check",
+  "status": "New in v5",
+  "screen": "Home (notice at the top)",
+  "delta": "New notice on the Home screen when the Stage list or its Stage Kind column in the Lists tab has a problem. It says what to fix. It does not block anything: the tool keeps working with the stages as they are.",
+  "validations": "Form: none. The checks run on the server when the data loads (see the server note). Server checks: this check only warns and never blocks. A warning is raised when a stage has no Stage Kind or a Kind other than Open, Won or Lost; when there is no Open stage; when there is not exactly one Won stage; when there is no Lost stage; when the Won stage comes before an Open stage; and when a Lost stage comes before the Won stage. A list with no stages at all also raises a warning.",
+  "calculations": "The notice is shown only when there is something to fix and disappears once the sheet is corrected and the data is refreshed [CONFIRMED]. A stage with no Kind is treated as neither Open, Won nor Lost until it is fixed, so it is not counted as open [CONFIRMED]. Server: Stage names and Kinds are read row by row from Lists, so a stage and its Kind stay on the same row even when cells in the column are blank [CONFIRMED]. The words Open, Won and Lost are the only fixed words; no stage name is written in the script [CONFIRMED]. Warnings are worked out every time the data is loaded and returned with it [CONFIRMED]. The first stage in the list is the stage a new engagement starts at [CONFIRMED]. The sheet itself is never rewritten by this check [CONFIRMED].",
+  "dependencies": "Lists (Company): Stage, Stage Kind.",
+  "id": "F20"
+ },
+ {
+  "feature": "Campaigns on engagements",
+  "status": "New in v5",
+  "screen": "Organisation page > Add engagement; Engagement page > Edit; Engagement page",
+  "delta": "New optional Campaign choice when adding or editing an engagement, and the campaign name on the engagement page. Campaigns are typed in the Campaigns tab of the company sheet. The choice is not shown when there are no campaigns.",
+  "validations": "Form: optional. Only active campaigns are offered, plus the engagement's current campaign if it has since become inactive. The server repeats the check. Server checks: a Campaign ID, if given, must exist in the Campaigns tab and the campaign must be Active; an engagement may keep its current campaign even when that campaign has since become inactive. The Campaign ID can be cleared. A missing Campaigns tab is treated as an empty list.",
+  "calculations": "A campaign is only a label on an engagement; it changes no stage or count in this tool [CONFIRMED]. The Insights tool uses it to report one campaign at a time [CONFIRMED]. Server: Campaign IDs and names are trimmed in memory before they are matched, and the sheet is never rewritten [CONFIRMED]. Campaigns are typed in the sheet; the script only reads them [CONFIRMED].",
+  "dependencies": "Campaigns (company sheet); Engagements: Campaign ID. Server: Campaigns (company sheet); Engagements: Campaign ID.",
+  "id": "F21"
+ },
+ {
+  "feature": "Stage History log",
+  "status": "New in v5",
+  "screen": "None (written by the script when an engagement is added or its stage changes)",
+  "delta": "New append-only tab in the company sheet. One row is added for every engagement created through the tool and for every stage change. It feeds the Insights funnel and weekly movement.",
+  "validations": "Server checks: the Stage History tab must exist; if it does not, the save is refused before anything is written and the message names the missing tab. Rows are never edited or deleted by the script.",
+  "calculations": "Log ID is the highest existing number plus 1, written as STG- plus 5 digits, under a script lock [CONFIRMED]. A new engagement gets one row with From Stage blank and To Stage the first stage [CONFIRMED]. A save that changes Stage adds one row with From Stage the old stage, To Stage the new stage, Changed On the current time in the Config timezone and Changed By the person saving [CONFIRMED]. A save that does not change Stage adds no row [CONFIRMED]. A stage typed directly in the sheet is not logged [CONFIRMED].",
+  "dependencies": "Stage History (company sheet); Engagements: Stage; Members; F07, F08.",
+  "id": "F22"
+ },
+ {
+  "feature": "Insights read action",
+  "status": "New in v5",
+  "screen": "None (script action used by the Insights tool)",
+  "delta": "New read-only action, getInsights, and a second key. Config > Insights Team Key opens only this action; the Team Key keeps opening everything. The Insights tool uses the company's existing web app, so there is no second deployment. In v4 the action no longer returns interactions or Stale After Days, because Insights no longer has a Needs attention card.",
+  "validations": "Server checks: the Insights Team Key is refused for every write action and for every action other than getInsights, with a message saying it can only be used to view Insights. A wrong key is refused as before. The Team Key must still be set in Config.",
+  "calculations": "The action returns only what Insights needs: the engagement fields Engagement ID, Org ID, Product ID, Stage, Start Date, Stage Changed On and Campaign ID; the organisation fields Org ID, Org Name, Record Status and Archived To; products; campaigns; Stage History; the stage list with Kinds; and the settings Primary Colour, Workspace Name, Timezone and today's date [CONFIRMED]. Contacts, summaries, expectations and document links are not returned [CONFIRMED]. Nothing is written [CONFIRMED].",
+  "dependencies": "Config (Company): Insights Team Key, Team Key, Primary Colour, Workspace Name; Engagements; Stage History; Campaigns; Products; Org Master (Orgs).",
+  "id": "F23"
+ },
+ {
+  "feature": "Open access when a key is blank",
+  "status": "New in v6",
+  "screen": "Config (company sheet); first open of Partnerships and Insights",
+  "delta": "New rule for the two keys in the Config tab. A blank Team Key opens the whole tool to anyone who has the web app address, and the key screen is not shown. A blank Insights Team Key opens only the read-only Insights view to anyone, while the Team Key (if set) still guards everything else. Filling a key in again brings the key screen back.",
+  "validations": "Server checks: with a Team Key set, every request must carry it, as before. With a blank Insights Team Key, only the read-only getInsights action works without a key; writes and every other action still need the Team Key. A wrong key is refused as before. The Insights key is still refused for writes and other actions when it is set.",
+  "calculations": "Blank means empty or only spaces in the Value cell [CONFIRMED]. When the Team Key is blank nothing is checked, so any person with the address can read contacts and add or change organisations, engagements and interactions, and the people list shows who is using the tool but proves nothing [CONFIRMED]. The person's name chosen on the device is still required for every save and is stamped on it [CONFIRMED]. The tool decides whether to show the key screen from the server's answer, not from a setting on the device [CONFIRMED].",
+  "dependencies": "Config (Company): Team Key, Insights Team Key; F01 (CRM start-up); I01 (Insights start-up); F23.",
+  "id": "F24"
+ }
+];
+REG.settingsItems.push({ group: 'Master data and reference', order: 3, label: 'Feature Spec', route: 'spec' });
+REG.routes.spec = function () {
+  page('Feature Spec');
+  document.body.classList.add('spec-view');
+  const mark = s => esc(s).replace(/\[CONFIRMED[^\]]*\]/g, m => '<span class="badge st-conv">' + m.slice(1, -1) + '</span>').replace(/\[UNVERIFIED[^\]]*\]/g, m => '<span class="badge cold">' + m.slice(1, -1) + '</span>');
+  show('<div class="spec-wrap"><table class="spec"><thead><tr><th>Sr No</th><th>Feature</th><th>New / Modified</th><th>Screen / Location</th><th>Delta</th><th>Validations</th><th>Calculations</th><th>Dependencies</th></tr></thead><tbody>'
+    + FEATURE_SPEC.map((f, i) => '<tr><td>' + (i + 1) + '</td><td><b>' + esc(f.feature) + '</b></td><td>' + esc(f.status) + '</td><td>' + esc(f.screen) + '</td><td>' + esc(f.delta) + '</td><td>' + esc(f.validations) + '</td><td>' + mark(f.calculations) + '</td><td>' + esc(f.dependencies) + '</td></tr>').join('')
+    + '</tbody></table></div>');
+};
+
+/* ==== BEGIN F01 — Connect, identify and brand ================================ */
+/* @spec F01
+ * Feature: Connect, identify and brand
+ * Status: Modified in v6
+ * Screen: First open; Settings > This device
+ * Delta: New start-up flow: the web app address (from the landing page link ?url=, or typed once), the team key, and the person using the tool. All three are remembered on the device. The page title, heading and main colour come from Config. In v6 the team key step appears only when the server asks for a key: with a blank Team Key in Config the tool opens straight to the person choice (see F24).
+ * Validations: Form: the web app address must answer; the team key is required when the server asks for one and is checked by the server on every request; the person must be chosen from active members.
+ * Calculations: Remembered values are kept per web app address, so two workspaces opened from the same page do not mix [CONFIRMED]. Heading is Tool Title (default Relationships), the subtitle is Workspace Name, and the colour is Primary Colour with darker and softer shades worked out from it [CONFIRMED]. Today's date comes from the server in the Config timezone [CONFIRMED].
+ * Dependencies: Config (Company): Team Key, Workspace Name, Tool Title, Primary Colour, Timezone; Members.
+ * @end */
+function applyData(d) {
+  S.cfg = d.config; S.members = d.members; S.lists = d.lists; S.products = d.products; S.productWarnings = d.productWarnings || [];
+  S.stageWarnings = d.stageWarnings || []; S.campaigns = d.campaigns || [];
+  S.engagements = d.engagements; S.interactions = d.interactions; S.orgs = d.orgs;
+  if (!S.lists.stageKind) S.lists.stageKind = {};
+  applyBrand(); reindex();
+}
+async function refreshData() { applyData(await api('getAll')); }
+function viewShell() { setChrome({ title: brandTitle(), sub: S.cfg.workspaceName || '', back: false }); setBar(''); }
+function viewConnect(msg) {
+  viewShell();
+  show((msg ? '<div class="banner">' + esc(msg) + '</div>' : '') + '<div class="card">' + fText('url', 'Web app address', { req: true, type: 'url', placeholder: 'https://script.google.com/…' }) + '</div>', '<button class="btn btn-primary" id="f01go">Connect</button>');
+  $('#f01go').addEventListener('click', () => {
+    const miss = validateForm($('#view')); if (miss) { barError(miss); return; }
+    const url = readForm($('#view'))['url'];
+    runSave($('#f01go'), async () => {
+      let ok = false;
+      try { const r = await fetch(url + (url.indexOf('?') >= 0 ? '&' : '?') + 'action=ping'); ok = (await r.json()).ok; } catch (e) { ok = false; }
+      if (!ok) throw new Error('That address did not answer. Please check it and try again.');
+      useUrl(url); begin();
+    });
+  });
+}
+function viewKey(msg) {
+  viewShell();
+  show((msg ? '<div class="banner">' + esc(msg) + '</div>' : '') + '<div class="card">' + fText('key', 'Team key', { req: true }) + '</div>', '<button class="btn btn-primary" id="f01go">Open</button>');
+  const go1 = () => { const miss = validateForm($('#view')); if (miss) { barError(miss); return; } S.key = readForm($('#view'))['key']; store.set('key', S.key); startData(); };
+  $('#f01go').addEventListener('click', go1);
+}
+function viewWho(canCancel) {
+  viewShell();
+  show('<div class="card">' + fChoice('who', 'Who is using this?', activeNames(), { req: true, value: S.me }) + '</div>' + (canCancel ? '<div class="center"><button class="link-btn" data-act="f01.cancelwho">Cancel</button></div>' : ''),
+    '<button class="btn btn-primary" id="f01go">Continue</button>');
+  $('#f01go').addEventListener('click', () => {
+    const miss = validateForm($('#view')); if (miss) { barError(miss); return; }
+    S.me = readForm($('#view'))['who']; store.set('me', S.me); startRouting();
+  });
+}
+function viewError(msg) {
+  viewShell();
+  show('<div class="empty">' + esc(msg) + '<br><button class="btn btn-primary" id="f01retry">Try again</button><br><button class="link-btn" id="f01change">Change web app address</button></div>');
+  $('#f01retry').addEventListener('click', startData);
+  $('#f01change').addEventListener('click', () => viewConnect());
+}
+async function startData() {
+  viewShell(); show('<div class="loading-note">Loading…</div>');
+  try { await refreshData(); }
+  catch (e) {
+    if (/team key/i.test(e.message)) { const had = !!S.key; store.del('key'); S.key = ''; viewKey(had ? e.message : ''); return; }
+    viewError(e.message); return;
+  }
+  const me = store.get('me');
+  if (me && activeNames().indexOf(me) >= 0) { S.me = me; startRouting(); } else { S.me = ''; viewWho(false); }
+}
+let routingOn = false;
+function startRouting() {
+  if (!routingOn) { window.addEventListener('hashchange', onHash); routingOn = true; }
+  if (!location.hash) history.replaceState(null, '', location.pathname + location.search + '#/home');
+  navStack.length = 0; navStack.push(location.hash);
+  route();
+}
+function useUrl(url) {
+  NS = 'crm.'; store.set('lastUrl', url);
+  S.url = url; NS = 'crm.' + hashStr(url) + '.';
+  REG.hooks.url.forEach(f => f());
+}
+function begin() {
+  S.key = store.get('key') || '';
+  startData();
+}
+REG.acts['core.who'] = () => viewWho(true);
+REG.acts['f01.cancelwho'] = () => startRouting();
+REG.acts['core.reload'] = async () => { toast('Reloading…'); try { await refreshData(); route(); toast('Up to date.'); } catch (e) { toast(e.message); } };
+REG.acts['core.forget'] = () => { store.del('key'); store.del('me'); S.key = ''; S.me = ''; startData(); };
+function start() {
+  const p = new URLSearchParams(location.search);
+  NS = 'crm.';
+  const url = p.get('url') || store.get('lastUrl') || '';
+  if (!url) { viewConnect(); return; }
+  useUrl(url); begin();
+}
+/* ==== END F01 ================================================================ */
+
+start();
+
+</script>
+</body>
+</html>
