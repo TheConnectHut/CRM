@@ -256,28 +256,32 @@
 <script>
 'use strict';
 /* ====================================================================
-   CRM front end — generic relationship tool (one HTML file), v6
+   CRM front end — generic relationship tool (one HTML file), v7
 
    Structure:
      CORE            state, API, data index, router, UI and form helpers
-     FEATURE BLOCKS  F02 … F21, each between BEGIN/END markers and headed by
+     FEATURE BLOCKS  F02 … F28, each between BEGIN/END markers and headed by
                      a spec tag. A feature registers itself into REG (routes,
                      home tabs, menus, org-page sections); deleting its block
                      removes the feature and leaves the rest working.
      F01             connect / identify / start-up (last, because it runs)
    The Feature Spec view is generated from the spec tags at build time
-   (build_crm.py merges the tags in this file with those in crm_v3.gs).
+   (build_crm.py merges the tags in this file with those in crm_v5.gs).
    F12 (Manage products) was removed in v2 and its number is not reused.
    v5: stage names are never written in this file. They come from
    Lists > Stage with a Stage Kind (Open, Won, Lost) beside each; only
    those three words are fixed.
+   v7: internal Tasks (F25 add and edit, F26 done / open again, F27 Tasks tab
+   on Home, F28 Tasks card on the engagement page). Each is its own block;
+   deleting F25 to F28 removes Tasks. The only shared lines are S.tasks, the
+   tasks line in applyData and the REG.engSections draw in the engagement page.
    ==================================================================== */
 
 const S = {
-  url: '', key: '', me: '', cfg: {}, members: [], products: [], productWarnings: [], stageWarnings: [], campaigns: [], engagements: [], interactions: [], orgs: [],
+  url: '', key: '', me: '', cfg: {}, members: [], products: [], productWarnings: [], stageWarnings: [], campaigns: [], engagements: [], interactions: [], tasks: [], orgs: [],
   lists: { stage: [], stageKind: {}, interactionType: [], orgType: [], source: [] }, idx: {}, ui: {}
 };
-const REG = { routes: {}, homeTabs: [], homeBanners: [], addMenu: [], orgSections: [], orgActions: [], settingsItems: [], deviceRows: [], hooks: { chrome: [], url: [] }, acts: {} };
+const REG = { routes: {}, homeTabs: [], homeBanners: [], addMenu: [], orgSections: [], engSections: [], orgActions: [], settingsItems: [], deviceRows: [], hooks: { chrome: [], url: [] }, acts: {} };
 function activeOrgs() { return S.orgs.filter(o => o['Record Status'] !== 'Archived'); }
 
 /* ---------- stages: names and kinds come from the Lists tab ---------- */
@@ -943,9 +947,9 @@ REG.routes['add-eng'] = function (args) {
 /* ==== BEGIN F08 — Engagement page and update ================================= */
 /* @spec F08
  * Feature: Engagement page and update
- * Status: Modified in v5
+ * Status: Modified in v7
  * Screen: Organisation page > Engagements; Engagement page; Engagement page > Edit
- * Delta: New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page. In v5 the stages and their order come from the Lists tab, the colour of each stage badge follows its Stage Kind, the campaign is shown and can be changed (see F21), and a stage change is logged (see F22).
+ * Delta: New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page. In v5 the stages and their order come from the Lists tab, the colour of each stage badge follows its Stage Kind, the campaign is shown and can be changed (see F21), and a stage change is logged (see F22). In v7 the engagement page also draws any card that another feature registers for it (see F28).
  * Validations: Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the chosen stage has the Kind Lost. The server repeats every check.
  * Calculations: Tapping a stage saves it at once and sets Stage Changed On to today; tapping a Lost stage opens the edit form so the reason can be added [CONFIRMED]. Last contact is the latest interaction Date for the engagement [CONFIRMED]. An engagement is flagged Going cold when its stage Kind is Open, it is not at the first stage in the list, and the days since its last interaction (or its start date if there is none) exceed Stale After Days [CONFIRMED]. Won and Lost engagements, and engagements still at the first stage, are never flagged [CONFIRMED]. Engagements on the organisation page are ordered Open stages first, then Won, then Lost, each in the order of the Lists tab, newest start first [CONFIRMED]. Badge colours: first stage soft purple, other Open stages solid purple, Won green, Lost grey [CONFIRMED].
  * Dependencies: Engagements; Products; Interactions; Lists (Company): Stage, Stage Kind; Config: Stale After Days; Members; Campaigns.
@@ -985,6 +989,7 @@ REG.routes.eng = function (args) {
     + S.lists.stage.map(st => '<button class="chip' + (st === e['Stage'] ? ' selected' : '') + '" data-act="f08.stage" data-id="' + escA(e['Engagement ID']) + '" data-v="' + escA(st) + '">' + esc(st) + '</button>').join('') + '</div></div>'
     + '<div class="card"><dl class="kv">' + rows.map(r => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl></div>'
     + (e['Expectations'] ? '<div class="card"><div class="card-title">Expectations</div><div class="about-text">' + esc(e['Expectations']) + '</div></div>' : '')
+    + REG.engSections.slice().sort((a, b) => a.order - b.order).map(s => s.html(e)).join('')
     + '<div class="card"><div class="card-title">Interactions</div>' + (ints.length ? ints.map(i => intRowHtml(i)).join('') : '<div class="muted">Nothing logged yet.</div>') + '</div>';
   show(html, (REG.routes.log ? '<a class="btn btn-primary" href="#/log/' + escA(rid) + '/' + escA(e['Engagement ID']) + '">Log interaction</a>' : '') + '<a class="btn" href="#/edit-eng/' + escA(e['Engagement ID']) + '">Edit</a>');
 };
@@ -1517,9 +1522,9 @@ const FEATURE_SPEC = [
  },
  {
   "feature": "Engagement page and update",
-  "status": "Modified in v5",
+  "status": "Modified in v7",
   "screen": "Organisation page > Engagements; Engagement page; Engagement page > Edit",
-  "delta": "New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page. In v5 the stages and their order come from the Lists tab, the colour of each stage badge follows its Stage Kind, the campaign is shown and can be changed (see F21), and a stage change is logged (see F22).",
+  "delta": "New list of engagements on the organisation page, a new engagement page, and an edit form. The stage can be changed with one tap on the engagement page. In v5 the stages and their order come from the Lists tab, the colour of each stage badge follows its Stage Kind, the campaign is shown and can be changed (see F21), and a stage change is logged (see F22). In v7 the engagement page also draws any card that another feature registers for it (see F28).",
   "validations": "Form: stage, owner and start date are required in the edit form. Revisit date cannot be earlier than the start date. The reason and revisit date are shown only when the chosen stage has the Kind Lost. The server repeats every check. Server checks: Stage must be in Lists (Company) > Stage. A changed Owner must be an active member. Start Date and Revisit On must be valid dates, and Revisit On cannot be earlier than Start Date. Document Link, if given, must be a web address. A changed Campaign ID follows F21. Org ID and Product ID cannot be changed. Saved by must be an active member.",
   "calculations": "Tapping a stage saves it at once and sets Stage Changed On to today; tapping a Lost stage opens the edit form so the reason can be added [CONFIRMED]. Last contact is the latest interaction Date for the engagement [CONFIRMED]. An engagement is flagged Going cold when its stage Kind is Open, it is not at the first stage in the list, and the days since its last interaction (or its start date if there is none) exceed Stale After Days [CONFIRMED]. Won and Lost engagements, and engagements still at the first stage, are never flagged [CONFIRMED]. Engagements on the organisation page are ordered Open stages first, then Won, then Lost, each in the order of the Lists tab, newest start first [CONFIRMED]. Badge colours: first stage soft purple, other Open stages solid purple, Won green, Lost grey [CONFIRMED]. Server: Stage Changed On is set to today whenever Stage changes [CONFIRMED]. A Stage History row is added whenever Stage changes (see F22) [CONFIRMED]. Not Interested Reason and Revisit On are kept as saved when the stage later changes; they are not cleared automatically [CONFIRMED].",
   "dependencies": "Engagements; Products; Interactions; Lists (Company): Stage, Stage Kind; Config: Stale After Days; Members; Campaigns. Server: Engagements; Lists (Company): Stage; Members; Campaigns; Stage History.",
@@ -1674,6 +1679,46 @@ const FEATURE_SPEC = [
   "calculations": "Blank means empty or only spaces in the Value cell [CONFIRMED]. When the Team Key is blank nothing is checked, so any person with the address can read contacts and add or change organisations, engagements and interactions, and the people list shows who is using the tool but proves nothing [CONFIRMED]. The person's name chosen on the device is still required for every save and is stamped on it [CONFIRMED]. The tool decides whether to show the key screen from the server's answer, not from a setting on the device [CONFIRMED].",
   "dependencies": "Config (Company): Team Key, Insights Team Key; F01 (CRM start-up); I01 (Insights start-up); F23.",
   "id": "F24"
+ },
+ {
+  "feature": "Add and edit a task",
+  "status": "New in v7",
+  "screen": "Home > Add > Add task; Home > Tasks > Add task; Engagement page > Tasks > Add task; any task row > edit",
+  "delta": "New form for a task: title, who does it, due date, an optional link to an engagement or a campaign, and notes. The same form edits a task. A task opened from an engagement page already has that engagement chosen. getAll now returns the Tasks rows.",
+  "validations": "Form: title and assigned to are required. The title is up to 150 characters. The due date, if given, cannot be earlier than the day the task was created. A task links to an engagement or a campaign, not both; when a link is chosen, the engagement or campaign must be picked. Only active campaigns are offered, plus the one already on the task. The server repeats every check. Server checks: Title is required, up to 150 characters. Assigned To must be an active member. Due Date, if given, must be a valid date and not earlier than the day the task was created. A task links to an engagement or to a campaign, not both. A linked engagement must exist. A newly chosen campaign must exist and be Active; a task may keep a campaign that has since become inactive. Saved by must be an active member. Status, Done On, Created On and Created By cannot be changed here.",
+  "calculations": "Assigned to defaults to the person using the tool [CONFIRMED]. Any member can edit any task, including the assignee, due date and link [CONFIRMED]. Status, Done On and the created details are not part of this form [CONFIRMED]. After saving, the screen the person came from is shown again [CONFIRMED]. Server: Task ID is the highest existing number plus 1, written as TSK- plus 4 digits, under a script lock [CONFIRMED]. Status starts as Open and Done On blank [CONFIRMED]. Created On is set on save and Created By is the person saving [CONFIRMED]. Any member can edit any task, including the assignee, due date and link [CONFIRMED]. Notes keep their line breaks as typed [CONFIRMED].",
+  "dependencies": "Tasks; Members; Engagements; Campaigns; Org Master (Orgs). Server: Tasks (company sheet); Members; Engagements; Campaigns (F21).",
+  "id": "F25"
+ },
+ {
+  "feature": "Mark a task done or open it again",
+  "status": "New in v7",
+  "screen": "Home > Tasks; Engagement page > Tasks",
+  "delta": "A Done button on every open task and an Open again button on every done task. There is no delete or cancel: a task raised by mistake is marked Done.",
+  "validations": "Form: none. The server checks that the task exists. Server checks: the task must exist. Saved by must be an active member.",
+  "calculations": "Done saves at once, sets the status to Done and Done On to today, and the task leaves the Open list [CONFIRMED]. Open again sets the status back to Open and clears Done On [CONFIRMED]. The list stays where it was scrolled [CONFIRMED]. Server: Marking done sets Status to Done and Done On to today in the Config timezone [CONFIRMED]. Opening again sets Status to Open and clears Done On [CONFIRMED]. Nothing else on the task changes [CONFIRMED].",
+  "dependencies": "Tasks; F27 or F28 (the lists that show the button). Server: Tasks; Members.",
+  "id": "F26"
+ },
+ {
+  "feature": "Tasks tab",
+  "status": "New in v7",
+  "screen": "Home > Tasks",
+  "delta": "New home tab beside Organisations, Engagements and Follow-ups. It lists tasks with a Person filter and a Status filter, an Add task button, and a Done button on each row. Each row shows the title, who it is assigned to, the due date, and the college and product or the campaign it is linked to. Notes are not shown on the row.",
+  "validations": "Form: none; both filters are optional.",
+  "calculations": "The Person filter starts as the person using the tool and can be set to All or another person [CONFIRMED]. The Status filter starts as Open and can be set to Done or All [CONFIRMED]. Overdue: an Open task whose due date is before today is shown in red as Overdue by n days; Done tasks and tasks with no due date are never overdue [CONFIRMED]. Open tasks are listed with dated ones first, earliest due date first (so overdue ones come first), then tasks with no date, newest first [CONFIRMED]. Done tasks are listed with the most recently done first [CONFIRMED]. A task linked to an engagement shows its college (an archived college shows as its replacement) and product [CONFIRMED]. A task whose assignee is no longer active keeps showing that name [CONFIRMED].",
+  "dependencies": "Tasks; Engagements; Campaigns; Members; Org Master (Orgs); F25 (row opens the edit form); F26 (Done button).",
+  "id": "F27"
+ },
+ {
+  "feature": "Tasks on the engagement page",
+  "status": "New in v7",
+  "screen": "Engagement page > Tasks",
+  "delta": "New Tasks card on the engagement page, above Interactions. The engagement page now draws any card that a feature registers for it (this card is the first).",
+  "validations": "Form: none.",
+  "calculations": "The card lists the engagement's Open tasks in the same order as the Tasks tab, with title, assignee, due date (overdue in red), notes and a Done button [CONFIRMED]. Add task opens the task form with this engagement already chosen [CONFIRMED]. When the engagement has Done tasks, a link shows how many; tapping it lists them and tapping again hides them [CONFIRMED]. Tasks linked to a campaign appear only in the Tasks tab [CONFIRMED].",
+  "dependencies": "Tasks; F27 (row layout and ordering); F25 (Add task); F26 (Done button); F08 (engagement page).",
+  "id": "F28"
  }
 ];
 REG.settingsItems.push({ group: 'Master data and reference', order: 3, label: 'Feature Spec', route: 'spec' });
@@ -1685,6 +1730,197 @@ REG.routes.spec = function () {
     + FEATURE_SPEC.map((f, i) => '<tr><td>' + (i + 1) + '</td><td><b>' + esc(f.feature) + '</b></td><td>' + esc(f.status) + '</td><td>' + esc(f.screen) + '</td><td>' + esc(f.delta) + '</td><td>' + esc(f.validations) + '</td><td>' + mark(f.calculations) + '</td><td>' + esc(f.dependencies) + '</td></tr>').join('')
     + '</tbody></table></div>');
 };
+
+/* ==== BEGIN F25 — Add and edit task ========================================== */
+/* @spec F25
+ * Feature: Add and edit a task
+ * Status: New in v7
+ * Screen: Home > Add > Add task; Home > Tasks > Add task; Engagement page > Tasks > Add task; any task row > edit
+ * Delta: New form for a task: title, who does it, due date, an optional link to an engagement or a campaign, and notes. The same form edits a task. A task opened from an engagement page already has that engagement chosen. getAll now returns the Tasks rows.
+ * Validations: Form: title and assigned to are required. The title is up to 150 characters. The due date, if given, cannot be earlier than the day the task was created. A task links to an engagement or a campaign, not both; when a link is chosen, the engagement or campaign must be picked. Only active campaigns are offered, plus the one already on the task. The server repeats every check.
+ * Calculations: Assigned to defaults to the person using the tool [CONFIRMED]. Any member can edit any task, including the assignee, due date and link [CONFIRMED]. Status, Done On and the created details are not part of this form [CONFIRMED]. After saving, the screen the person came from is shown again [CONFIRMED].
+ * Dependencies: Tasks; Members; Engagements; Campaigns; Org Master (Orgs).
+ * @end */
+REG.addMenu.push({ order: 3, label: 'Add task', route: 'add-task' });
+function f25_engItems() {
+  return S.engagements.map(e => ({ v: e['Engagement ID'], l: orgName(resolveOrgId(e['Org ID'])) + ' — ' + engLabel(e), s: e['Stage'] }))
+    .sort((a, b) => a.l.localeCompare(b.l));
+}
+function f25_campOptions(current) {
+  return S.campaigns.filter(c => isYes(c['Active']) || c['Campaign ID'] === current).map(c => ({ v: c['Campaign ID'], l: c['Campaign Name'] }));
+}
+function f25_form(t, fixedEng) {
+  const names = activeNames(); const who = t ? t['Assigned To'] : S.me;
+  if (who && names.indexOf(who) < 0) names.push(who);
+  const camps = f25_campOptions(t ? t['Campaign ID'] : '');
+  const link = t ? (t['Engagement ID'] ? 'Engagement' : (t['Campaign ID'] ? 'Campaign' : 'None')) : 'None';
+  const linkOpts = ['None', 'Engagement'].concat(camps.length ? ['Campaign'] : []);
+  let h = '<div class="card">';
+  if (fixedEng) {
+    const e = S.idx.eng[fixedEng];
+    h += '<div class="org-name">' + esc(orgName(resolveOrgId(e['Org ID']))) + ' — ' + esc(engLabel(e)) + '</div>';
+  }
+  h += fText('Title', 'What needs to be done?', { req: true, value: t ? t['Title'] : '' })
+    + fChoice('Assigned To', 'Assigned to', names, { req: true, value: who })
+    + fDate('Due Date', 'Due date', { value: t ? t['Due Date'] : '', min: t ? t['Created On'].slice(0, 10) : todayStr() });
+  if (!fixedEng) {
+    h += fChips('Link', 'Linked to', linkOpts, { value: link })
+      + fCombo('Engagement ID', 'Engagement', f25_engItems(), { req: true, value: t ? t['Engagement ID'] : '', placeholder: 'Search by college', hidden: link !== 'Engagement' })
+      + fSelect('Campaign ID', 'Campaign', camps, { req: true, value: t ? t['Campaign ID'] : '', hidden: link !== 'Campaign' });
+  }
+  return h + fText('Notes', 'Notes', { area: true, rows: 3, value: t ? t['Notes'] : '' }) + '</div>';
+}
+function f25_wire(t, fixedEng, back_) {
+  const root = $('#view');
+  root.addEventListener('chipchange', ev => {
+    if (!ev.target.closest('[data-f="Link"]')) return;
+    $('.field[data-f="Engagement ID"]', root).hidden = ev.detail.v !== 'Engagement';
+    $('.field[data-f="Campaign ID"]', root).hidden = ev.detail.v !== 'Campaign';
+  });
+  $('#f25save').addEventListener('click', () => {
+    const miss = validateForm(root);
+    if (miss) { barError(miss); return; }
+    const f = readForm(root);
+    if (f['Title'].length > 150) { barError('The title can be up to 150 characters.'); return; }
+    if (f['Due Date'] && f['Due Date'] < (t ? t['Created On'].slice(0, 10) : todayStr())) { barError('The due date cannot be earlier than the day the task was created.'); return; }
+    runSave($('#f25save'), async () => {
+      const payload = { by: S.me, title: f['Title'], assignedTo: f['Assigned To'], dueDate: f['Due Date'], notes: f['Notes'],
+        engagementId: fixedEng || f['Engagement ID'] || '', campaignId: f['Campaign ID'] || '' };
+      if (t) payload.taskId = t['Task ID'];
+      const d = await api(t ? 'updateTask' : 'addTask', payload, true);
+      upsert(S.tasks, 'Task ID', d.task);
+      if (!fixedEng && !t) S.ui.tab = 'tasks';
+      confirmed('Saved.', '');
+      back();
+    });
+  });
+}
+REG.routes['add-task'] = function (args) {
+  const fixed = args[0] && S.idx.eng[args[0]] ? args[0] : '';
+  page('Add task');
+  show(f25_form(null, fixed), '<button class="btn btn-primary" id="f25save">Save</button>');
+  f25_wire(null, fixed);
+};
+REG.routes['edit-task'] = function (args) {
+  const t = S.tasks.find(x => x['Task ID'] === args[0]);
+  page('Edit task');
+  if (!t) { show('<div class="empty">That task could not be found.</div>'); return; }
+  show(f25_form(t, ''), '<button class="btn btn-primary" id="f25save">Save changes</button>');
+  f25_wire(t, '');
+};
+/* ==== END F25 ================================================================ */
+
+/* ==== BEGIN F26 — Mark task done or open again =============================== */
+/* @spec F26
+ * Feature: Mark a task done or open it again
+ * Status: New in v7
+ * Screen: Home > Tasks; Engagement page > Tasks
+ * Delta: A Done button on every open task and an Open again button on every done task. There is no delete or cancel: a task raised by mistake is marked Done.
+ * Validations: Form: none. The server checks that the task exists.
+ * Calculations: Done saves at once, sets the status to Done and Done On to today, and the task leaves the Open list [CONFIRMED]. Open again sets the status back to Open and clears Done On [CONFIRMED]. The list stays where it was scrolled [CONFIRMED].
+ * Dependencies: Tasks; F27 or F28 (the lists that show the button).
+ * @end */
+function f26_btn(t) {
+  return t['Status'] === 'Done'
+    ? '<button class="btn btn-sm" data-act="f26.set" data-done="" data-id="' + escA(t['Task ID']) + '">Open again</button>'
+    : '<button class="btn btn-sm" data-act="f26.set" data-done="1" data-id="' + escA(t['Task ID']) + '">Done</button>';
+}
+REG.acts['f26.set'] = async el => {
+  const done = !!el.dataset.done;
+  try {
+    const d = await api('setTaskDone', { by: S.me, taskId: el.dataset.id, done: done }, true);
+    upsert(S.tasks, 'Task ID', d.task);
+    const y = window.scrollY; route(); window.scrollTo(0, y);
+    toast(done ? 'Marked done.' : 'Opened again.');
+  } catch (err) { toast(err.message); }
+};
+/* ==== END F26 ================================================================ */
+
+/* ==== BEGIN F27 — Tasks tab (Home) =========================================== */
+/* @spec F27
+ * Feature: Tasks tab
+ * Status: New in v7
+ * Screen: Home > Tasks
+ * Delta: New home tab beside Organisations, Engagements and Follow-ups. It lists tasks with a Person filter and a Status filter, an Add task button, and a Done button on each row. Each row shows the title, who it is assigned to, the due date, and the college and product or the campaign it is linked to. Notes are not shown on the row.
+ * Validations: Form: none; both filters are optional.
+ * Calculations: The Person filter starts as the person using the tool and can be set to All or another person [CONFIRMED]. The Status filter starts as Open and can be set to Done or All [CONFIRMED]. Overdue: an Open task whose due date is before today is shown in red as Overdue by n days; Done tasks and tasks with no due date are never overdue [CONFIRMED]. Open tasks are listed with dated ones first, earliest due date first (so overdue ones come first), then tasks with no date, newest first [CONFIRMED]. Done tasks are listed with the most recently done first [CONFIRMED]. A task linked to an engagement shows its college (an archived college shows as its replacement) and product [CONFIRMED]. A task whose assignee is no longer active keeps showing that name [CONFIRMED].
+ * Dependencies: Tasks; Engagements; Campaigns; Members; Org Master (Orgs); F25 (row opens the edit form); F26 (Done button).
+ * @end */
+const F27 = { person: null, status: 'open' };
+REG.homeTabs.push({ id: 'tasks', label: 'Tasks', order: 4, render: f27_render });
+function f27_due(t) {
+  if (t['Status'] === 'Done') return { text: 'Done ' + fmtD(t['Done On']), late: false };
+  if (!t['Due Date']) return { text: 'No due date', late: false };
+  const late = t['Due Date'] < todayStr();
+  return { text: late ? 'Overdue by ' + plural(daysBetween(t['Due Date'], todayStr()), 'day') : 'Due ' + fmtD(t['Due Date']), late: late };
+}
+function f27_link(t) {
+  if (t['Engagement ID']) {
+    const e = S.idx.eng[t['Engagement ID']];
+    return e ? orgName(resolveOrgId(e['Org ID'])) + ' — ' + engLabel(e) : t['Engagement ID'];
+  }
+  return t['Campaign ID'] ? campaignName(t['Campaign ID']) : '';
+}
+function f27_row(t, o) {
+  o = o || {};
+  const d = f27_due(t), link = o.link === false ? '' : f27_link(t);
+  return '<div class="row"><div class="row-top"><a href="#/edit-task/' + escA(t['Task ID']) + '" style="flex:1;min-width:0;text-decoration:none;color:inherit">'
+    + '<div class="row-title">' + esc(t['Title']) + '</div>'
+    + '<div class="row-sub"><span class="' + (d.late ? 'overdue' : '') + '">' + esc(d.text) + '</span> · ' + esc(t['Assigned To']) + '</div>'
+    + (link ? '<div class="small muted">' + esc(link) + '</div>' : '')
+    + (o.notes && t['Notes'] ? '<div class="pre small muted">' + esc(t['Notes']) + '</div>' : '') + '</a>'
+    + (typeof f26_btn === 'function' ? f26_btn(t) : '') + '</div></div>';
+}
+function f27_sort(a, b) {
+  if (a['Status'] !== b['Status']) return a['Status'] === 'Open' ? -1 : 1;
+  if (a['Status'] === 'Done') return (b['Done On'] + b['Task ID']).localeCompare(a['Done On'] + a['Task ID']);
+  if (!!a['Due Date'] !== !!b['Due Date']) return a['Due Date'] ? -1 : 1;
+  if (a['Due Date']) return a['Due Date'].localeCompare(b['Due Date']) || a['Task ID'].localeCompare(b['Task ID']);
+  return (b['Created On'] + b['Task ID']).localeCompare(a['Created On'] + a['Task ID']);
+}
+function f27_render(host) {
+  if (F27.person === null) F27.person = S.me;
+  const people = Array.from(new Set(activeNames().concat(S.tasks.map(t => t['Assigned To'])))).sort((a, b) => a.localeCompare(b));
+  host.innerHTML = '<div class="filter-panel" style="margin-bottom:10px">'
+    + '<div class="field"><label class="field-label">Person</label><select id="f27person"><option value="">All</option>' + people.map(n => '<option' + (n === F27.person ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div>'
+    + '<div class="field"><label class="field-label">Status</label><select id="f27status">' + [['open', 'Open'], ['done', 'Done'], ['all', 'All']].map(x => '<option value="' + x[0] + '"' + (F27.status === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select></div></div>'
+    + '<div class="row-top" style="margin:4px 2px 10px"><div class="count-line" id="f27count" style="margin:0"></div><a class="btn btn-sm" href="#/add-task">Add task</a></div><div id="f27list"></div>';
+  $('#f27person').addEventListener('change', e => { F27.person = e.target.value; f27_list(); });
+  $('#f27status').addEventListener('change', e => { F27.status = e.target.value; f27_list(); });
+  f27_list();
+}
+function f27_list() {
+  const rows = S.tasks.filter(t => (!F27.person || t['Assigned To'] === F27.person) && (F27.status === 'all' || t['Status'] === (F27.status === 'done' ? 'Done' : 'Open'))).sort(f27_sort);
+  $('#f27count').textContent = plural(rows.length, 'task');
+  $('#f27list').innerHTML = rows.length ? '<div class="list">' + rows.map(t => f27_row(t)).join('') + '</div>' : '<div class="empty">No tasks here.</div>';
+}
+/* ==== END F27 ================================================================ */
+
+/* ==== BEGIN F28 — Tasks on the engagement page =============================== */
+/* @spec F28
+ * Feature: Tasks on the engagement page
+ * Status: New in v7
+ * Screen: Engagement page > Tasks
+ * Delta: New Tasks card on the engagement page, above Interactions. The engagement page now draws any card that a feature registers for it (this card is the first).
+ * Validations: Form: none.
+ * Calculations: The card lists the engagement's Open tasks in the same order as the Tasks tab, with title, assignee, due date (overdue in red), notes and a Done button [CONFIRMED]. Add task opens the task form with this engagement already chosen [CONFIRMED]. When the engagement has Done tasks, a link shows how many; tapping it lists them and tapping again hides them [CONFIRMED]. Tasks linked to a campaign appear only in the Tasks tab [CONFIRMED].
+ * Dependencies: Tasks; F27 (row layout and ordering); F25 (Add task); F26 (Done button); F08 (engagement page).
+ * @end */
+REG.engSections.push({
+  order: 20,
+  html: e => {
+    const id = e['Engagement ID'];
+    const mine = S.tasks.filter(t => t['Engagement ID'] === id).sort(f27_sort);
+    const open = mine.filter(t => t['Status'] === 'Open'), done = mine.filter(t => t['Status'] === 'Done');
+    const showDone = S.ui.showDoneTasks === id;
+    return '<div class="card"><div class="card-title">Tasks<a class="link-btn" href="#/add-task/' + escA(id) + '">Add task</a></div>'
+      + (open.length ? open.map(t => f27_row(t, { link: false, notes: true })).join('') : '<div class="muted">No open tasks.</div>')
+      + (done.length ? '<div><button class="link-btn" data-act="f28.toggle" data-id="' + escA(id) + '">' + (showDone ? 'Hide done tasks' : plural(done.length, 'done task')) + '</button></div>' : '')
+      + (showDone ? done.map(t => f27_row(t, { link: false, notes: true })).join('') : '') + '</div>';
+  }
+});
+REG.acts['f28.toggle'] = el => { S.ui.showDoneTasks = S.ui.showDoneTasks === el.dataset.id ? '' : el.dataset.id; const y = window.scrollY; REG.routes.eng([el.dataset.id]); window.scrollTo(0, y); };
+/* ==== END F28 ================================================================ */
 
 /* ==== BEGIN F01 — Connect, identify and brand ================================ */
 /* @spec F01
@@ -1699,7 +1935,7 @@ REG.routes.spec = function () {
 function applyData(d) {
   S.cfg = d.config; S.members = d.members; S.lists = d.lists; S.products = d.products; S.productWarnings = d.productWarnings || [];
   S.stageWarnings = d.stageWarnings || []; S.campaigns = d.campaigns || [];
-  S.engagements = d.engagements; S.interactions = d.interactions; S.orgs = d.orgs;
+  S.engagements = d.engagements; S.interactions = d.interactions; S.tasks = d.tasks || []; S.orgs = d.orgs;
   if (!S.lists.stageKind) S.lists.stageKind = {};
   applyBrand(); reindex();
 }
